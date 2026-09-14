@@ -1,0 +1,224 @@
+# Local AI stack - Open WebUI + llama.cpp + supporting services
+#
+# All bind mounts are relative to this file, so the stack runs from wherever
+# you clone it. Create the directories first:
+#   mkdir -p models comfy comfy-models notebooks searxng
+#
+# Secrets come from a .env file beside this one. See .env.example.
+
+services:
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama
+    runtime: nvidia
+    ports: ["127.0.0.1:8000:8000"]
+    volumes:
+      - ./models:/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    # -ngl 99 --n-cpu-moe 999 keeps attention on the GPU and pushes MoE experts
+    # to system RAM. Drop --n-cpu-moe for a dense model that fits in VRAM.
+    # -t / -tb should roughly match your physical / logical core count.
+    command: >
+      -m /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+      --host 0.0.0.0 --port 8000 --alias qwen
+      -c 32768 -np 1
+      -ngl 99 --n-cpu-moe 999
+      -t 8 -tb 16
+      -b 4096 -ub 2048
+      --cache-reuse 256
+      -fa on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --jinja --reasoning off
+      --load-mode none
+    restart: unless-stopped
+
+  comfyui:
+    image: yanwk/comfyui-boot:cu128-slim
+    container_name: comfyui
+    runtime: nvidia
+    ports: ["8188:8188"]
+    volumes:
+      - ./comfy:/root
+      - ./comfy-models:/root/ComfyUI/models
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+      # --reserve-vram leaves headroom so ComfyUI and the LLM can coexist
+      - CLI_ARGS=--listen 0.0.0.0 --reserve-vram 0.6
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=openwebui
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=openwebui
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  tika:
+    image: apache/tika:latest-full
+    container_name: tika
+    restart: unless-stopped
+
+  playwright:
+    # Version must match the playwright package pinned in the Open WebUI image:
+    #   docker exec openwebui pip show playwright | grep Version
+    image: mcr.microsoft.com/playwright:v1.60.0-noble
+    container_name: playwright
+    command: npx -y playwright@1.60.0 run-server --port 3000 --host 0.0.0.0
+    restart: unless-stopped
+    # deliberately no ports: only openwebui needs to reach it
+
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    container_name: kokoro
+    ports: ["127.0.0.1:8880:8880"]
+    restart: unless-stopped
+
+  jupyter:
+    image: quay.io/jupyter/scipy-notebook:latest
+    container_name: jupyter
+    ports: ["127.0.0.1:8888:8888"]
+    volumes:
+      - ./notebooks:/home/jovyan/work
+    command: >
+      start-notebook.py
+      --IdentityProvider.token=${JUPYTER_TOKEN}
+      --ServerApp.ip=0.0.0.0
+      --ServerApp.allow_origin=*
+      --ServerApp.disable_check_xsrf=True
+    restart: unless-stopped
+
+  searxng:
+    # Requires settings.yml with the json format enabled - see README
+    image: searxng/searxng:latest
+    container_name: searxng
+    ports: ["127.0.0.1:8080:8080"]
+    volumes:
+      - ./searxng:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+    restart: unless-stopped
+
+  open-terminal:
+    # Root shell on the host. Use a real random key and never publish the port.
+    image: ghcr.io/open-webui/open-terminal
+    container_name: open-terminal
+    environment:
+      - OPEN_TERMINAL_API_KEY=${OPEN_TERMINAL_API_KEY}
+    volumes:
+      - open-terminal:/home/user
+    # also no ports: keep it off the LAN
+    restart: unless-stopped
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    ports: ["3000:8080"]
+    volumes:
+      - openwebui-data:/app/backend/data
+    environment:
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # Set to the URL users actually reach this at, if behind a reverse proxy
+      - WEBUI_URL=http://localhost:3000
+      - OPENAI_API_BASE_URL=http://llama:8000/v1
+      - OPENAI_API_KEY=none
+      - ENABLE_OLLAMA_API=false
+
+      # Database
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - VECTOR_DB=pgvector
+      - PGVECTOR_DB_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
+      - DATABASE_POOL_SIZE=10
+      - DATABASE_POOL_MAX_OVERFLOW=20
+
+      # Code execution + interpreter
+      - ENABLE_CODE_EXECUTION=true
+      - CODE_EXECUTION_ENGINE=jupyter
+      - CODE_EXECUTION_JUPYTER_URL=http://jupyter:8888
+      - CODE_EXECUTION_JUPYTER_AUTH=token
+      - CODE_EXECUTION_JUPYTER_AUTH_TOKEN=${JUPYTER_TOKEN}
+      - ENABLE_CODE_INTERPRETER=true
+      - CODE_INTERPRETER_ENGINE=jupyter
+      - CODE_INTERPRETER_JUPYTER_URL=http://jupyter:8888
+      - CODE_INTERPRETER_JUPYTER_AUTH=token
+      - CODE_INTERPRETER_JUPYTER_AUTH_TOKEN=${JUPYTER_TOKEN}
+
+      # Speech
+      - AUDIO_TTS_ENGINE=openai
+      - AUDIO_TTS_OPENAI_API_BASE_URL=http://kokoro:8880/v1
+      - AUDIO_TTS_OPENAI_API_KEY=none
+      - AUDIO_TTS_MODEL=kokoro
+      - AUDIO_TTS_VOICE=af_sky
+      - AUDIO_TTS_SPLIT_ON=punctuation
+      - WHISPER_MODEL=base.en
+
+      # Images
+      - ENABLE_IMAGE_GENERATION=true
+      - IMAGE_GENERATION_ENGINE=comfyui
+      - COMFYUI_BASE_URL=http://comfyui:8188
+      - IMAGE_SIZE=1024x1024
+      - IMAGE_STEPS=25
+
+      # RAG
+      - CONTENT_EXTRACTION_ENGINE=tika
+      - TIKA_SERVER_URL=http://tika:9998
+      - RAG_EMBEDDING_MODEL=BAAI/bge-m3
+      - ENABLE_RAG_HYBRID_SEARCH=true
+      - RAG_RERANKING_MODEL=BAAI/bge-reranker-v2-m3
+      - CHUNK_SIZE=1200
+      - CHUNK_OVERLAP=150
+      - RAG_TOP_K=6
+
+      # Web search + loader
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=searxng
+      - SEARXNG_QUERY_URL=http://searxng:8080/search?q=<query>&format=json
+      - WEB_SEARCH_RESULT_COUNT=5
+      - WEB_SEARCH_CONCURRENT_REQUESTS=5
+      - WEB_LOADER_ENGINE=playwright
+      - PLAYWRIGHT_WS_URL=ws://playwright:3000
+      - PLAYWRIGHT_TIMEOUT=10000
+
+      # Background generation - off to save tokens on a CPU-offloaded model
+      - ENABLE_TITLE_GENERATION=false
+      - ENABLE_TAGS_GENERATION=false
+      - ENABLE_FOLLOW_UP_GENERATION=false
+      - ENABLE_AUTOCOMPLETE_GENERATION=false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      llama:
+        condition: service_started
+      tika:
+        condition: service_started
+      jupyter:
+        condition: service_started
+      searxng:
+        condition: service_started
+      playwright:
+        condition: service_started
+      open-terminal:
+        condition: service_started
+      kokoro:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  openwebui-data:
+  pgdata:
+  open-terminal:
