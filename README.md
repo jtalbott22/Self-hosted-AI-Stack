@@ -127,6 +127,7 @@ The included configuration expects:
 
 ```text
 models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+models/mmproj-F16.gguf
 ```
 
 For example:
@@ -136,6 +137,7 @@ pip install -U "huggingface_hub[cli]"
 
 hf download unsloth/Qwen3.6-35B-A3B-GGUF \
   Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+  mmproj-F16.gguf \
   --local-dir ./models
 ```
 
