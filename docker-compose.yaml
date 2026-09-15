@@ -33,6 +33,7 @@ services:
     # models that exceed available VRAM.
     command: >
       -m /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+      --mmproj /models/mmproj-F16.gguf
       --host 0.0.0.0 --port 8000 --alias qwen
       -c 131072 -np 1
       -ngl 99 --n-cpu-moe 999
