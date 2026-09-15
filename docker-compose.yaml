@@ -1,17 +1,25 @@
-# Local AI stack - Open WebUI + llama.cpp + supporting services
+# Self-hosted local AI stack
 #
-# All bind mounts are relative to this file, so the stack runs from wherever
-# you clone it. Create the directories first:
-#   mkdir -p models comfy comfy-models notebooks searxng
+# Host directories are relative to this repository:
+#   models/       LLM weights
+#   comfy/        ComfyUI application data
+#   comfy-models/ ComfyUI model files
+#   notebooks/    Jupyter notebooks
+#   searxng/      SearXNG configuration
 #
-# Secrets come from a .env file beside this one. See .env.example.
+# Secrets come from .env. See .env.example.
+#
+# Sparkboard is optional. If you don't want it, remove the sparkboard service
+# and its sparkboard-data volume, and remove the sparkboard directory.
 
 services:
   llama:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
     container_name: llama
     runtime: nvidia
-    ports: ["127.0.0.1:8000:8000"]
+    ports: ["8000:8000"]
+    environment:
+      - LLAMA_API_KEY=${LLAMA_API_KEY:-}
     volumes:
       - ./models:/models
     healthcheck:
@@ -20,13 +28,13 @@ services:
       timeout: 10s
       retries: 3
       start_period: 300s
-    # -ngl 99 --n-cpu-moe 999 keeps attention on the GPU and pushes MoE experts
-    # to system RAM. Drop --n-cpu-moe for a dense model that fits in VRAM.
-    # -t / -tb should roughly match your physical / logical core count.
+    # -ngl 99 keeps attention on the GPU.
+    # --n-cpu-moe 999 pushes MoE experts to system RAM, useful for large
+    # models that exceed available VRAM.
     command: >
       -m /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
       --host 0.0.0.0 --port 8000 --alias qwen
-      -c 32768 -np 1
+      -c 131072 -np 1
       -ngl 99 --n-cpu-moe 999
       -t 8 -tb 16
       -b 4096 -ub 2048
@@ -48,9 +56,47 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
-      # --reserve-vram leaves headroom so ComfyUI and the LLM can coexist
+      # Leave some VRAM available for the LLM.
       - CLI_ARGS=--listen 0.0.0.0 --reserve-vram 0.6
     restart: unless-stopped
+
+  # ----------------------------------------------------------------
+  # Sparkboard is optional. It provides local system/container metrics
+  # and an optional activity feed for the AI stack.
+  sparkboard:
+    build: ./sparkboard
+    container_name: sparkboard
+    runtime: nvidia
+    ports: ["9102:9102"]
+    pid: host
+    cap_add: [SYS_PTRACE]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=utility
+      - HOST_LABEL=${HOST_LABEL:-AI-Workstation}
+      - SAMPLE_INTERVAL=${SAMPLE_INTERVAL:-2}
+      - SERVICES_INTERVAL=${SERVICES_INTERVAL:-10}
+      - RETENTION_DAYS=${RETENTION_DAYS:-120}
+      - HOST_PROC=/host/proc
+      - DB_PATH=/data/metrics.db
+      # Linux/WSL disk paths. Adjust or remove for non-WSL Linux systems.
+      - "DISK_PATHS=${DISK_PATHS:-/=Linux}"
+      # Optional activity feed:
+      # - SPARKBOARD_PROXY=1
+      # - SPARKBOARD_VLLM_UPSTREAM=http://llama:8000
+      # - SPARKBOARD_CLASSIFY_SAMPLE=0.5
+      # - SPARKBOARD_CLASSIFY_CONCURRENCY=1
+    volumes:
+      - sparkboard-data:/data
+      - /proc:/host/proc:ro
+      # Read-only Docker socket is enough for Sparkboard's container metrics.
+      # Note: Docker socket access is still security-sensitive.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Optional WSL Windows-volume monitoring. Remove these on native Linux.
+      - /mnt/c:/host/disks/c:ro
+      - /mnt/d:/host/disks/d:ro
+    restart: unless-stopped
+  # ----------------------------------------------------------------
 
   postgres:
     image: pgvector/pgvector:pg17
@@ -75,24 +121,24 @@ services:
     restart: unless-stopped
 
   playwright:
-    # Version must match the playwright package pinned in the Open WebUI image:
+    # Keep this version aligned with the Playwright package expected by the
+    # Open WebUI image. Check with:
     #   docker exec openwebui pip show playwright | grep Version
     image: mcr.microsoft.com/playwright:v1.60.0-noble
     container_name: playwright
     command: npx -y playwright@1.60.0 run-server --port 3000 --host 0.0.0.0
     restart: unless-stopped
-    # deliberately no ports: only openwebui needs to reach it
 
   kokoro:
     image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
     container_name: kokoro
-    ports: ["127.0.0.1:8880:8880"]
+    ports: ["8880:8880"]
     restart: unless-stopped
 
   jupyter:
     image: quay.io/jupyter/scipy-notebook:latest
     container_name: jupyter
-    ports: ["127.0.0.1:8888:8888"]
+    ports: ["8888:8888"]
     volumes:
       - ./notebooks:/home/jovyan/work
     command: >
@@ -104,25 +150,25 @@ services:
     restart: unless-stopped
 
   searxng:
-    # Requires settings.yml with the json format enabled - see README
     image: searxng/searxng:latest
     container_name: searxng
-    ports: ["127.0.0.1:8080:8080"]
+    ports: ["8080:8080"]
     volumes:
       - ./searxng:/etc/searxng
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
     restart: unless-stopped
 
   open-terminal:
-    # Root shell on the host. Use a real random key and never publish the port.
-    image: ghcr.io/open-webui/open-terminal
+    # This service gives Open WebUI a shell/filesystem. Treat it as a
+    # trusted-user component; do not publish its API port.
+    image: ghcr.io/open-webui/open-terminal:0.12.3
     container_name: open-terminal
     environment:
       - OPEN_TERMINAL_API_KEY=${OPEN_TERMINAL_API_KEY}
     volumes:
-      - open-terminal:/home/user
-    # also no ports: keep it off the LAN
+      - open-terminal:/home/workspace
     restart: unless-stopped
 
   openwebui:
@@ -133,8 +179,8 @@ services:
       - openwebui-data:/app/backend/data
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
-      # Set to the URL users actually reach this at, if behind a reverse proxy
-      - WEBUI_URL=http://localhost:3000
+      # Set this only if you put Open WebUI behind a reverse proxy.
+      - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
       - OPENAI_API_BASE_URL=http://llama:8000/v1
       - OPENAI_API_KEY=none
       - ENABLE_OLLAMA_API=false
@@ -184,7 +230,7 @@ services:
       - CHUNK_OVERLAP=150
       - RAG_TOP_K=6
 
-      # Web search + loader
+      # Web search + page loading
       - ENABLE_WEB_SEARCH=true
       - WEB_SEARCH_ENGINE=searxng
       - SEARXNG_QUERY_URL=http://searxng:8080/search?q=<query>&format=json
@@ -194,16 +240,17 @@ services:
       - PLAYWRIGHT_WS_URL=ws://playwright:3000
       - PLAYWRIGHT_TIMEOUT=10000
 
-      # Background generation - off to save tokens on a CPU-offloaded model
+      # Disable background generation to reduce token/compute overhead.
       - ENABLE_TITLE_GENERATION=false
       - ENABLE_TAGS_GENERATION=false
       - ENABLE_FOLLOW_UP_GENERATION=false
       - ENABLE_AUTOCOMPLETE_GENERATION=false
+
     depends_on:
       postgres:
         condition: service_healthy
       llama:
-        condition: service_started
+        condition: service_healthy
       tika:
         condition: service_started
       jupyter:
@@ -222,3 +269,4 @@ volumes:
   openwebui-data:
   pgdata:
   open-terminal:
+  sparkboard-data:

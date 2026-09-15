@@ -1,0 +1,1022 @@
+/*
+ * Sparkboard styling.
+ *
+ * Direction: a rack instrument panel, not a terminal and not a gamer HUD.
+ * Hairline rules divide a continuous surface instead of floating cards on a
+ * page; labels are silkscreen-small and tracked out; every reading is set in
+ * tabular figures so the numbers hold still while they update.
+ *
+ * Palette is a chart-recorder pen set -- one distinct ink per channel,
+ * deliberately stepped back from NVIDIA's brand green, which at full
+ * saturation on black fights every other trace on the page.
+ */
+
+:root {
+  --housing: #0E1116;
+  --panel: #141A21;
+  --panel-hi: #1A212B;
+  --rule: #242D39;
+  --rule-soft: #1C242E;
+
+  --ink: #E6EDF3;
+  --ink-dim: #8B97A6;
+  --ink-faint: #5A6675;
+
+  --pen-gpu: #6FE3A8;
+  --pen-mem: #7AA2F7;
+  --pen-therm: #FFA657;
+  --pen-power: #D2A8FF;
+  --pen-cpu: #56D4DD;
+  --pen-alert: #FF7B72;
+
+  /* Threshold bands. Slightly brightened from the pens so tinted numbers read
+     clearly, and chosen to stay distinguishable for red/green colour-blindness
+     (amber sits well apart from both, and the crit red leans orange). */
+  --lvl-ok: #56D48A;
+  --lvl-warn: #E3B341;
+  --lvl-crit: #F0776C;
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono",
+          "IBM Plex Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+
+  --gut: 20px;
+}
+
+/* Light theme. Overrides the same variables so every component follows without
+   per-component light styles. Ink/surface invert; the pens darken just enough
+   to hold contrast on a light background (WCAG AA for text-sized elements). */
+[data-theme="light"] {
+  --housing: #F4F6F8;
+  --panel: #FFFFFF;
+  --panel-hi: #FBFCFD;
+  --rule: #D6DDE4;
+  --rule-soft: #E4E9EE;
+
+  --ink: #1A2029;
+  --ink-dim: #55606D;
+  --ink-faint: #7A8794;
+
+  --pen-gpu: #1A9E63;
+  --pen-mem: #3B6FD4;
+  --pen-therm: #C4681A;
+  --pen-power: #8B52C4;
+  --pen-cpu: #157F8A;
+  --pen-alert: #D0362B;
+
+  --lvl-ok: #1A8F52;
+  --lvl-warn: #9A6A00;
+  --lvl-crit: #C0362B;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  /* Hard ceiling on page width. Without this, one wide child (a table row, a
+     long image name) makes the whole page wider than the viewport, and mobile
+     Safari responds by zooming out and letting you pan around -- the exact
+     "zooms all over the place" bug. Everything wide must scroll *inside* its
+     own container instead. */
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  background: var(--housing);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: 40px;
+}
+
+/* Silkscreen label: the one typographic device repeated across the panel. */
+.eyebrow {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+a { color: var(--pen-mem); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+:focus-visible {
+  outline: 2px solid var(--pen-gpu);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ------------------------------------------------------------------ rails */
+
+.rail {
+  border-bottom: 1px solid var(--rule);
+  padding: 0 var(--gut);
+}
+
+.rail--head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  min-height: 56px;
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+}
+
+.ident { display: flex; align-items: center; gap: 11px; min-width: 0; }
+
+.ident__dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-faint);
+  box-shadow: 0 0 0 0 transparent;
+}
+.ident__dot[data-state="live"] {
+  background: var(--pen-gpu);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+.ident__dot[data-state="paused"] { background: var(--pen-therm); }
+.ident__dot[data-state="down"] { background: var(--pen-alert); }
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(111, 227, 168, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(111, 227, 168, 0); }
+}
+
+.ident__host {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ident__gpu {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.facts { display: flex; gap: 22px; margin: 0; flex-wrap: wrap; }
+.facts__item { display: flex; align-items: baseline; gap: 7px; }
+.facts dt {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.facts dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+
+/* ------------------------------------------------------- memory pool */
+
+.pool {
+  padding: 15px var(--gut) 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel);
+}
+
+.pool__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.pool__cap {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+
+/* Shared ruler. Both tracks read against this one scale -- that is what
+   makes them legible as a single pool rather than two unrelated gauges. */
+.pool__ruler {
+  position: relative;
+  height: 13px;
+  margin-left: 46px;
+  margin-right: 92px;
+  border-bottom: 1px solid var(--rule);
+}
+.pool__tick {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pool__tick::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 1px;
+  height: 4px;
+  background: var(--rule);
+}
+.pool__tick:first-child { transform: none; }
+.pool__tick:first-child::after { left: 0; }
+.pool__tick:last-child { transform: translateX(-100%); }
+.pool__tick:last-child::after { left: 100%; }
+
+.pool__tracks { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+
+.pool__row { display: flex; align-items: center; gap: 10px; }
+
+.pool__label {
+  width: 36px;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.pool__track {
+  flex: 1;
+  height: 15px;
+  background: var(--housing);
+  border: 1px solid var(--rule-soft);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.pool__fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  transition: width 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.pool__fill--gpu {
+  background: linear-gradient(90deg, rgba(111,227,168,0.30), var(--pen-gpu));
+}
+.pool__fill--host {
+  background: linear-gradient(90deg, rgba(122,162,247,0.30), var(--pen-mem));
+}
+
+.pool__value {
+  width: 82px;
+  flex: none;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.pool__note {
+  margin: 9px 0 0 46px;
+  font-size: 11px;
+  color: var(--ink-faint);
+  max-width: 70ch;
+}
+
+/* --------------------------------------------------------- readout rail */
+
+.rail--readout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  padding: 0;
+  background: var(--panel);
+}
+
+.cell {
+  padding: 12px 15px 9px;
+  border-right: 1px solid var(--rule);
+  min-width: 0;
+}
+.cell:last-child { border-right: none; }
+
+.cell__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 5px;
+}
+.cell__pen { width: 7px; height: 7px; border-radius: 1px; flex: none; }
+
+.cell__read { display: flex; align-items: baseline; gap: 4px; }
+
+.cell__value {
+  font-family: var(--mono);
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+.cell__unit { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+.cell__sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+  height: 13px;
+}
+.cell__spark { margin-top: 4px; height: 26px; }
+.cell__spark canvas { display: block; }
+
+/* ---------------------------------------------------------- range rail */
+
+.rail--range {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-top: 9px;
+  padding-bottom: 9px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: rgba(14, 17, 22, 0.93);
+  backdrop-filter: blur(9px);
+}
+
+.ranges { display: flex; gap: 2px; }
+
+.ranges button {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: color 130ms, background 130ms, border-color 130ms;
+}
+.ranges button:hover { color: var(--ink); background: var(--panel-hi); }
+.ranges button[aria-pressed="true"] {
+  color: var(--housing);
+  background: var(--pen-gpu);
+  border-color: var(--pen-gpu);
+  font-weight: 600;
+}
+
+.rail__meta {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.pause {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.pause:hover { color: var(--ink); border-color: var(--ink-faint); }
+.pause[aria-pressed="true"] { color: var(--pen-therm); border-color: var(--pen-therm); }
+
+/* -------------------------------------------------------------- charts */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.panel { background: var(--panel); padding: 13px 15px 9px; min-width: 0; }
+
+.panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  min-height: 17px;
+}
+
+.legend { display: flex; gap: 12px; flex-wrap: wrap; }
+.legend__item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.legend__pen { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+
+.panel__now {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+
+.panel__plot { height: 132px; position: relative; }
+.panel__plot canvas { display: block; cursor: crosshair; }
+
+/* ---------------------------------------------------------- data tables */
+
+/* ------------------------------------------------------------- CPU cores */
+
+.cores {
+  padding: 14px var(--gut) 15px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel);
+}
+.cores__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.cores__meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.cores__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+  gap: 6px;
+}
+.core {
+  background: var(--housing);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: 5px 6px 4px;
+  min-width: 0;
+}
+.core__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.core__id {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+}
+.core__val {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+/* The bar is the quick read; the value is confirmation. Colour shifts warm as
+   a core saturates, so a wall of green-to-amber tells you the balance at a
+   glance without reading a single number. */
+.core__bar {
+  height: 4px;
+  background: var(--rule-soft);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.core__fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--pen-cpu);
+  transition: width 900ms linear, background 900ms linear;
+}
+
+/* --------------------------------------------------------- activity feed */
+
+.feed {
+  border-bottom: 1px solid var(--rule);
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+  padding: 13px var(--gut) 14px;
+}
+.feed__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 11px;
+}
+.feed__title { display: flex; align-items: center; gap: 9px; }
+.feed__pulse {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  flex: none;
+}
+.feed__pulse[data-live="1"] {
+  background: var(--pen-gpu);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+.feed__note {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  padding: 2px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+.feed__controls { display: flex; align-items: center; gap: 10px; }
+
+/* The marquee viewport. Labels stream right-to-left through it; masked at both
+   edges so items fade rather than pop at the boundary. */
+.feed__marquee {
+  position: relative;
+  overflow: hidden;
+  height: 40px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--housing);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+.feed__track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 100%;   /* start off the right edge */
+  white-space: nowrap;
+  will-change: transform;
+}
+.feed__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 4px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  flex: none;
+}
+.feed__dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.feed__age {
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.feed__empty {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-left: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.feed__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 11px;
+}
+.feed__cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: var(--housing);
+  border: 1px solid var(--rule-soft);
+}
+.feed__cat b {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.board { padding: 15px var(--gut) 0; }
+
+.board__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+.board__meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.board__scroll { overflow-x: auto; }
+
+.board__tools { display: flex; align-items: center; gap: 12px; }
+
+/* Same segmented control as the range rail, one step quieter -- it selects
+   what the row sparklines show, not what the whole page is scoped to. */
+.toggle { display: flex; gap: 2px; }
+.toggle button {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: color 130ms, border-color 130ms;
+}
+.toggle button:hover { color: var(--ink-dim); }
+.toggle button[aria-pressed="true"] {
+  color: var(--ink);
+  border-color: var(--rule);
+  background: var(--panel-hi);
+}
+
+.trend { min-width: 108px; width: 132px; }
+.trend canvas { display: block; }
+.trend__none { color: var(--ink-faint); font-size: 11px; }
+
+.dtable { width: 100%; border-collapse: collapse; }
+
+.dtable th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 0 10px 7px 0;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.dtable th.num, .dtable td.num { text-align: right; }
+
+.dtable td {
+  padding: 8px 10px 8px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+  vertical-align: middle;
+}
+.dtable td.key { color: var(--ink); }
+.dtable td.trunc {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dtable__empty td {
+  color: var(--ink-faint);
+  font-family: var(--sans);
+  text-align: left;
+  padding: 14px 0;
+}
+.dtable__empty td.warn { color: var(--pen-therm); }
+
+.dtable__bar {
+  height: 7px;
+  min-width: 60px;
+  background: var(--housing);
+  border: 1px solid var(--rule-soft);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.dtable__bar i { display: block; height: 100%; background: var(--pen-gpu); opacity: 0.75; }
+
+/* Port publications and service labels: same chip, different ink. */
+.chip {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.chip + .chip { margin-left: 4px; }
+.chip--dim { color: var(--ink-faint); }
+.chip--gpu { color: var(--pen-gpu); }
+.chip--mem { color: var(--pen-mem); }
+.chip--cpu { color: var(--pen-cpu); }
+.chip--power { color: var(--pen-power); }
+.chip--therm { color: var(--pen-therm); }
+
+.scope { font-size: 11px; }
+.scope--local { color: var(--ink-faint); }
+.scope--open { color: var(--pen-therm); }
+
+/* ----------------------------------------------------------- footer/tip */
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding: 15px var(--gut) 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.foot__sep { opacity: 0.4; }
+
+.tip {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  background: rgba(20, 26, 33, 0.97);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 7px 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  min-width: 132px;
+}
+.tip__time {
+  color: var(--ink-faint);
+  font-size: 10px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--rule);
+}
+.tip__row { display: flex; align-items: center; gap: 7px; margin-top: 2px; }
+.tip__pen { width: 7px; height: 7px; border-radius: 1px; flex: none; }
+.tip__label { color: var(--ink-dim); flex: 1; }
+.tip__value { color: var(--ink); font-weight: 600; }
+
+/* ------------------------------------------------------------ responsive */
+
+@media (max-width: 720px) {
+  :root { --gut: 13px; }
+  .rail--head { padding-top: 11px; padding-bottom: 11px; }
+  .facts { gap: 14px; }
+  .cell__value { font-size: 21px; }
+  .grid { grid-template-columns: 1fr; }
+  .pool__ruler { margin-left: 0; margin-right: 0; }
+  .pool__note { margin-left: 0; max-width: 100%; }
+  .pool__label { width: 30px; }
+  .pool__value { width: 70px; font-size: 11px; }
+  .dtable td.hide-sm, .dtable th.hide-sm { display: none; }
+  .dtable td.trunc { max-width: 42vw; }
+
+  /* Tables are the one thing allowed to scroll sideways -- keep that scroll
+     inside the card, never on the page. */
+  .board__scroll { max-width: 100%; -webkit-overflow-scrolling: touch; }
+
+  /* Per-core detail: smaller cells so the grid never needs to overflow. */
+  .cores__detail { grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); }
+
+  /* Tooltips: pin near the left edge and cap width so they can't push the
+     page out on the right. */
+  .hint::after { max-width: 68vw; left: 0; transform: none; }
+  .hint:last-child::after { left: auto; right: 0; }
+
+  /* Timeline tabs: bigger and more tappable, and allowed to scroll as a row
+     if they don't fit rather than wrapping into a cramped block. */
+  .rail--range { gap: 8px; }
+  .ranges {
+    gap: 4px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex: 1;
+  }
+  .ranges::-webkit-scrollbar { display: none; }
+  .ranges button {
+    min-height: 40px;
+    padding: 8px 14px;
+    font-size: 12px;
+    flex: none;
+  }
+  .readout { grid-template-columns: repeat(2, 1fr); }
+  .feed__marquee { height: 44px; }
+}
+
+@media (max-width: 420px) {
+  .readout { grid-template-columns: 1fr; }
+  .facts__item:nth-child(3) { display: none; }  /* drop Arch on very narrow */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* ============================================================ additions ==
+   CPU tiers, threshold tints, tooltips, theme toggle, and readability bumps.
+   ======================================================================== */
+
+/* --- threshold-tinted values --- */
+.lvl-ok   { color: var(--lvl-ok); }
+.lvl-warn { color: var(--lvl-warn); }
+.lvl-crit { color: var(--lvl-crit); }
+
+/* --- CPU tier bar --- */
+.tierbar {
+  display: flex;
+  height: 22px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--housing);
+  border: 1px solid var(--rule-soft);
+  margin-bottom: 10px;
+}
+.tierbar__seg {
+  height: 100%;
+  transition: width 500ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  min-width: 2px;
+}
+.cores__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.tierlegend { display: flex; gap: 14px; flex-wrap: wrap; }
+.tierkey {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.tierkey__dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.tierkey b { color: var(--ink); font-weight: 600; }
+
+.linkbtn {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 4px 10px;
+  cursor: pointer;
+  min-height: 30px;
+}
+.linkbtn:hover { color: var(--ink); border-color: var(--ink-faint); }
+
+.cores__detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-soft);
+}
+
+/* --- inline tooltip (CSS-only) --- */
+.hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 5px;
+  border-radius: 50%;
+  border: 1px solid var(--ink-faint);
+  color: var(--ink-faint);
+  font-family: var(--sans);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: help;
+  position: relative;
+  vertical-align: middle;
+  flex: none;
+}
+.hint:hover, .hint:focus {
+  color: var(--ink);
+  border-color: var(--ink-dim);
+  outline: none;
+}
+.hint::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 240px;
+  background: var(--panel-hi);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 7px 9px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+  z-index: 60;
+}
+.hint:hover::after, .hint:focus::after { opacity: 1; }
+
+/* --- theme toggle --- */
+.themebtn {
+  margin-left: 6px;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  flex: none;
+}
+.themebtn:hover { color: var(--ink); border-color: var(--ink-faint); }
+
+/* --- readability bumps --- */
+/* Bigger, thicker sparklines in the readout rail. */
+.cell__spark { height: 34px; }
+/* More air between major sections on wide screens. */
+.grid { gap: 1px; }
+.board, .cores, .procs, .feed { scroll-margin-top: 60px; }
+
+/* Right-align numeric readouts already handled by tabular-nums; ensure the
+   readout values and units sit on a consistent baseline. */
+.cell__read { align-items: baseline; }
+
+/* On touch screens, tooltips can't hover -- tapping the hint still shows it via
+   :focus (the element is focusable through tabindex added in JS). Make the
+   touch target meet the 44px guideline. */
+@media (pointer: coarse) {
+  .hint { width: 20px; height: 20px; font-size: 11px; }
+  .linkbtn { min-height: 44px; }
+  .themebtn { width: 44px; height: 44px; }
+}

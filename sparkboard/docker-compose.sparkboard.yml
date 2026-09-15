@@ -1,0 +1,64 @@
+# Standalone Sparkboard service for Docker Compose.
+#
+# Copy this service into an existing stack, or use this file with:
+#   docker compose -f docker-compose.yml -f docker-compose.sparkboard.yml up -d --build sparkboard
+#
+# The mounts below are intentionally explicit because Sparkboard is a host
+# monitor: /proc exposes host telemetry, the Docker socket enables the
+# container panel, and optional filesystem mounts enable storage reporting.
+
+services:
+  sparkboard:
+    build: ./sparkboard
+    container_name: sparkboard
+    # NVIDIA utility capability provides nvidia-smi/NVML without a CUDA
+    # compute runtime. Sparkboard does not reserve GPU memory.
+    runtime: nvidia
+    ports:
+      - "9102:9102"
+
+    # Host PID namespace lets Sparkboard map listening sockets to processes.
+    pid: host
+    cap_add:
+      - SYS_PTRACE
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=utility
+      - HOST_LABEL=${HOST_LABEL:-AI-Workstation}
+      - SAMPLE_INTERVAL=${SAMPLE_INTERVAL:-2}
+      - SERVICES_INTERVAL=${SERVICES_INTERVAL:-10}
+      - RETENTION_DAYS=${RETENTION_DAYS:-120}
+      - HOST_PROC=/host/proc
+      - DB_PATH=/data/metrics.db
+
+      # Native Linux default. For WSL2, see INSTALL.md.
+      - "DISK_PATHS=${DISK_PATHS:-/=Linux}"
+
+      # Optional activity feed. See README.md for the privacy model and
+      # authentication requirements before enabling it.
+      # - SPARKBOARD_PROXY=1
+      # - SPARKBOARD_VLLM_UPSTREAM=http://llama:8000
+      # - SPARKBOARD_CLASSIFY_SAMPLE=0.5
+      # - SPARKBOARD_CLASSIFY_CONCURRENCY=1
+
+    volumes:
+      - sparkboard-data:/data
+
+      # Host procfs: memory, uptime, processes, sockets, etc.
+      - /proc:/host/proc:ro
+
+      # Docker Engine API. :ro protects the socket file, not the API itself.
+      # Anything with access to this socket can potentially control Docker.
+      # Remove this mount to disable the containers panel.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # Optional WSL2 Windows volumes. Uncomment/add these only when running
+      # Docker inside WSL2 and you want C:/D: storage shown in Sparkboard.
+      # - /mnt/c:/host/disks/c:ro
+      # - /mnt/d:/host/disks/d:ro
+
+    restart: unless-stopped
+
+volumes:
+  sparkboard-data:

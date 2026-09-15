@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Sparkboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230E1116'/><path d='M6 21l5-8 4 5 3-6 4 9' stroke='%236FE3A8' stroke-width='2.2' fill='none' stroke-linejoin='round' stroke-linecap='round'/></svg>">
+<!-- Stylesheet path is relative on purpose: the app has to work unchanged
+     whether it is served at / or behind an nginx subpath like /gpu/. -->
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="rail rail--head">
+  <div class="ident">
+    <span class="ident__dot" id="live-dot" data-state="connecting"></span>
+    <h1 class="ident__host" id="hostname">connecting</h1>
+    <span class="ident__gpu" id="gpu-name"></span>
+  </div>
+  <dl class="facts" id="facts">
+    <div class="facts__item"><dt>Driver</dt><dd id="fact-driver">&mdash;</dd></div>
+    <div class="facts__item">
+      <dt>CUDA <span class="hint" data-tip="Version of the NVIDIA CUDA toolkit the driver supports.">?</span></dt>
+      <dd id="fact-cuda">&mdash;</dd>
+    </div>
+    <div class="facts__item"><dt>Arch</dt><dd id="fact-arch">&mdash;</dd></div>
+    <div class="facts__item"><dt>Uptime</dt><dd id="fact-uptime">&mdash;</dd></div>
+    <button class="themebtn" id="theme-toggle" type="button" aria-label="Toggle light/dark theme" title="Toggle theme">◐</button>
+  </dl>
+</header>
+
+
+<!-- On a unified-memory part CPU and GPU draw from one physical pool, so the
+     two tracks share a single ruler rather than getting independent axes. The
+     figures are not summed: on a coherent pool the two allocators can count
+     some of the same pages, and inventing a total would be a lie dressed up
+     as a number. On a discrete card the same element falls back to two
+     independent gauges, which is what those two numbers honestly are. -->
+<section class="pool" id="pool" hidden>
+  <div class="pool__head">
+    <h2 class="eyebrow" id="pool-title">Unified memory pool</h2>
+    <span class="pool__cap" id="pool-cap">&mdash;</span>
+  </div>
+  <div class="pool__ruler" id="pool-ruler"></div>
+  <div class="pool__tracks">
+    <div class="pool__row">
+      <span class="pool__label">GPU</span>
+      <div class="pool__track"><i class="pool__fill pool__fill--gpu" id="pool-gpu-fill"></i></div>
+      <span class="pool__value" id="pool-gpu-value">&mdash;</span>
+    </div>
+    <div class="pool__row">
+      <span class="pool__label">Host</span>
+      <div class="pool__track"><i class="pool__fill pool__fill--host" id="pool-host-fill"></i></div>
+      <span class="pool__value" id="pool-host-value">&mdash;</span>
+    </div>
+  </div>
+  <p class="pool__note" id="pool-note"></p>
+</section>
+
+<!-- Readout rail: one continuous strip of instrument readings rather than a
+     grid of cards. Each cell carries five minutes of context underneath. -->
+<section class="rail rail--readout" id="readout"></section>
+
+<!-- Live activity feed. Each item is a category label for one inference the
+     server handled -- never the prompt text itself. The scroll is the point:
+     a busy, varied stream is the trust signal. Rate is reader-adjustable;
+     hidden entirely unless the classifying proxy is enabled. -->
+<section class="feed" id="feed" hidden>
+  <div class="feed__head">
+    <div class="feed__title">
+      <span class="feed__pulse" id="feed-pulse"></span>
+      <h2 class="eyebrow">Live activity</h2>
+      <span class="feed__note">categories only &middot; no prompt text</span>
+    </div>
+    <div class="feed__controls">
+      <div class="toggle" id="feed-speed" role="group" aria-label="Scroll speed"></div>
+      <button class="pause" id="feed-pause" type="button" aria-pressed="false">Pause</button>
+    </div>
+  </div>
+  <div class="feed__marquee" id="feed-marquee">
+    <div class="feed__track" id="feed-track"></div>
+  </div>
+  <div class="feed__summary" id="feed-summary"></div>
+</section>
+
+<nav class="rail rail--range" aria-label="Time range">
+  <div class="ranges" id="ranges" role="group"></div>
+  <div class="rail__meta">
+    <span id="range-detail">&mdash;</span>
+    <button class="pause" id="pause" type="button" aria-pressed="false">Pause</button>
+  </div>
+</nav>
+
+<main class="grid" id="grid"></main>
+
+<!-- Per-core CPU. The aggregate line in the charts above hides which cores
+     are actually working, which matters most on heterogeneous parts (GB10's
+     20 mixed cores, a 13700KF's P-cores and E-cores). This strip shows each
+     core live, so a single-threaded pin reads differently from a balanced
+     load. Fed from the SSE stream's full sample, not stored history. -->
+<section class="cores" id="cores" hidden>
+  <div class="cores__head">
+    <h2 class="eyebrow">CPU load
+      <span class="hint" data-tip="Per-core CPU grouped into load tiers. Expand to see every core individually.">?</span>
+    </h2>
+    <span class="cores__meta" id="cores-meta"></span>
+  </div>
+  <div class="tierbar" id="cores-bar"></div>
+  <div class="cores__foot">
+    <div class="tierlegend" id="cores-legend"></div>
+    <button class="linkbtn" id="cores-toggle" type="button" aria-expanded="false">Show cores</button>
+  </div>
+  <div class="cores__detail" id="cores-detail" hidden></div>
+</section>
+
+
+<!-- GPU processes where the driver accounts for them. Where it does not --
+     WSL2 is the case in hand -- this falls back to the heaviest processes by
+     resident memory and relabels itself, rather than showing an empty table
+     that reads as an idle machine. -->
+<section class="board">
+  <div class="board__head">
+    <h2 class="eyebrow" id="procs-title">Processes holding GPU memory</h2>
+    <span class="board__meta" id="procs-count"></span>
+  </div>
+  <div class="board__scroll">
+    <table class="dtable">
+      <thead>
+        <tr><th scope="col">PID</th><th scope="col">Process</th>
+            <th scope="col" class="num" id="procs-col-mem">Memory</th>
+            <th scope="col" class="hide-sm" id="procs-col-share">Share of pool</th></tr>
+      </thead>
+      <tbody id="procs-body">
+        <tr class="dtable__empty"><td colspan="4">No processes are holding GPU memory.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="board" id="storage" hidden>
+  <div class="board__head">
+    <h2 class="eyebrow">Storage</h2>
+    <span class="board__meta" id="storage-meta"></span>
+  </div>
+  <div class="board__scroll">
+    <table class="dtable">
+      <thead>
+        <tr><th scope="col">Filesystem</th>
+            <th scope="col" class="num">Used</th>
+            <th scope="col" class="num">Free</th>
+            <th scope="col" class="num hide-sm">Size</th>
+            <th scope="col" class="hide-sm">&nbsp;</th></tr>
+      </thead>
+      <tbody id="storage-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="board">
+  <div class="board__head">
+    <h2 class="eyebrow">Containers</h2>
+    <div class="board__tools">
+      <div class="toggle" id="cmetric" role="group" aria-label="Trend metric"></div>
+      <span class="board__meta" id="docker-meta"></span>
+    </div>
+  </div>
+  <div class="board__scroll">
+    <table class="dtable">
+      <thead>
+        <tr><th scope="col">Name</th><th scope="col" class="hide-sm">Image</th>
+            <th scope="col" class="num">CPU</th><th scope="col" class="num">Memory</th>
+            <th scope="col">Ports</th>
+            <th scope="col" class="num hide-sm">Net I/O</th>
+            <th scope="col" id="ctrend-head" class="hide-sm">Trend</th></tr>
+      </thead>
+      <tbody id="docker-body">
+        <tr class="dtable__empty"><td colspan="7">Looking for containers&hellip;</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="board">
+  <div class="board__head">
+    <h2 class="eyebrow">Listening ports</h2>
+    <span class="board__meta" id="ports-meta"></span>
+  </div>
+  <div class="board__scroll">
+    <table class="dtable">
+      <thead>
+        <tr><th scope="col" class="num">Port</th><th scope="col">Service</th>
+            <th scope="col">Command</th><th scope="col" class="num">PID</th>
+            <th scope="col" class="hide-sm">Reachable from</th></tr>
+      </thead>
+      <tbody id="ports-body">
+        <tr class="dtable__empty"><td colspan="5">Looking for listening ports&hellip;</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer class="foot">
+  <span id="foot-store">&mdash;</span>
+  <span class="foot__sep">/</span>
+  <span id="foot-samples">&mdash;</span>
+  <span class="foot__sep">/</span>
+  <a href="./metrics">Prometheus metrics</a>
+</footer>
+
+<div class="tip" id="tip" hidden></div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
