@@ -1,4 +1,4 @@
-# Self-Hosted Local AI Stack
+[# Self-Hosted Local AI Stack
 
 A practical, local-first AI workstation built around **Open WebUI + llama.cpp**, with web search, RAG, Jupyter code execution, image generation, text-to-speech, and an optional system-monitoring dashboard.
 
@@ -410,3 +410,4 @@ Model weights, generated data, secrets, databases, and other machine-specific st
 ## License
 
 Choose a license appropriate for the code you publish. The repository itself is primarily configuration and integration glue around the respective upstream projects; each upstream component remains subject to its own license and terms.
+](https://github.com/jtalbott22/Self-hosted-AI-Stack)
