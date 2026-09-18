@@ -1,8 +1,10 @@
-[# Self-Hosted Local AI Stack
+# Self-Hosted Local AI Stack
 
 A practical, local-first AI workstation built around **Open WebUI + llama.cpp**, with web search, RAG, Jupyter code execution, image generation, text-to-speech, and an optional system-monitoring dashboard.
 
 The goal of this repository is not to provide a generic cloud AI server. It is a reproducible example of how to assemble a capable private AI environment on a single NVIDIA-equipped workstation.
+
+![Open WebUI chat interface](docs/screenshots/chat-home.png)
 
 ## What it provides
 
@@ -216,6 +218,16 @@ http://localhost:3000
 
 The first account created becomes the administrator.
 
+Open WebUI reaches llama.cpp as an OpenAI-compatible connection (**Admin Panel → Connections**):
+
+```text
+URL: http://llama:8000/v1
+```
+
+![Open WebUI Connections settings](docs/screenshots/connections.png)
+
+No API key is required for this internal connection. The built-in OpenAI API toggle can stay on with no key set if you don't also want a real OpenAI account wired in.
+
 The model should appear as:
 
 ```text
@@ -227,6 +239,10 @@ If it does not, check:
 ```bash
 docker compose logs llama
 ```
+
+Configured models show up under **Admin Panel → Models**:
+
+![Models configured in Open WebUI](docs/screenshots/models.png)
 
 ## Open Terminal
 
@@ -259,6 +275,25 @@ ws://playwright:3000
 
 If web search returns nothing, verify that SearXNG has JSON enabled.
 
+### Admin panel reference values
+
+**Admin Panel → Web Search**
+
+![Web Search settings](docs/screenshots/web-search-general.png)
+![Web Search loader settings](docs/screenshots/web-search-loader.png)
+
+| Setting | Value |
+|---|---|
+| Web Search | On |
+| Web Search Confirmation | Off |
+| Web Search Engine | `searxng` |
+| Searxng Query URL | `http://searxng:8080/search?q=<query>&format=json` |
+| Search Result Count | 15 |
+| Concurrent Requests | 5 |
+| Web Loader Engine | `playwright` |
+| Playwright WebSocket URL | `ws://playwright:3000` |
+| Playwright Timeout | 10000 ms |
+
 ## RAG and documents
 
 The stack uses:
@@ -269,6 +304,27 @@ The stack uses:
 - PostgreSQL/pgvector for vector storage
 
 Embedding and reranking models are downloaded when first needed.
+
+### Admin panel reference values
+
+**Admin Panel → Documents**
+
+![Documents embedding and retrieval settings](docs/screenshots/documents-embedding-rag.png)
+![Documents content extraction settings](docs/screenshots/documents-extraction.png)
+
+| Setting | Value |
+|---|---|
+| Content Extraction Engine | Tika |
+| Tika Server URL | `http://tika:9998` |
+| Tika Server Version | Tika 3.x |
+| Text Splitter | Default (Character) |
+| Markdown Header Text Splitter | On |
+| Chunk Size | 1200 |
+| Embedding Batch Size | 1 |
+| Hybrid Search | On |
+| Enrich Hybrid Search Text | Off |
+| Full Context Mode | Off |
+| Reranking Engine | Default (SentenceTransformers) |
 
 ## Image generation
 
@@ -290,6 +346,34 @@ ComfyUI itself is available at:
 http://localhost:8188
 ```
 
+### Admin panel reference values
+
+**Admin Panel → Images → Create Image**
+
+![Image generation settings](docs/screenshots/image-generation.png)
+
+| Setting | Value |
+|---|---|
+| Image Generation Engine | ComfyUI |
+| Base URL | `http://comfyui:8188` |
+| Image Size | 1024x1024 |
+| Steps | 25 |
+| Image Prompt Generation | On |
+
+### Image editing
+
+Open WebUI can also route image *edits* through a separate ComfyUI workflow (**Admin Panel → Images → Edit Image**), pointed at the same `http://comfyui:8188` base URL. After uploading your workflow as API-format JSON under **ComfyUI Workflow**, map the workflow's node IDs to the fields Open WebUI needs to fill in, e.g.:
+
+![Image editing workflow settings](docs/screenshots/image-editing.png)
+
+| Field | Workflow input | Node ID |
+|---|---|---|
+| Image | `image` | 78 |
+| Prompt | `prompt` | 435 |
+| Model | `unet_name` | set to your checkpoint/unet loader node |
+
+Node IDs are specific to your exported workflow graph and will differ from these.
+
 ## Jupyter / code execution
 
 Jupyter is available directly at:
@@ -309,6 +393,39 @@ The notebook directory is:
 ```text
 ./notebooks
 ```
+
+Open WebUI has two places that point at Jupyter and both need the same URL and token: **Admin Panel → Code Execution** (used by the Code Interpreter tool mid-chat) and its **Code Interpreter Engine**, set to `jupyter (Legacy)`.
+
+### Admin panel reference values
+
+**Admin Panel → Code Execution**
+
+![Code execution and interpreter settings](docs/screenshots/code-execution.png)
+
+| Setting | Value |
+|---|---|
+| Jupyter URL | `http://jupyter:8888` |
+| Jupyter Auth | Token |
+| Jupyter Token | value of `JUPYTER_TOKEN` |
+| Code Execution Timeout | 60s |
+| Enable Code Interpreter | On |
+| Code Interpreter Engine | jupyter (Legacy) |
+
+## Text-to-speech
+
+Open WebUI talks to Kokoro through the OpenAI-compatible TTS API:
+
+![Audio / text-to-speech settings](docs/screenshots/text-to-speech.png)
+
+| Setting | Value |
+|---|---|
+| Text-to-Speech Engine | OpenAI |
+| API Base URL | `http://kokoro:8880/v1` |
+| TTS Voice | `af_sky` |
+| TTS Model | `kokoro` |
+| Response Splitting | Punctuation |
+
+Response Splitting controls how message text is chunked before being sent to TTS; Punctuation splits on sentence boundaries rather than sending one long block or splitting by paragraph.
 
 ## Sparkboard
 
@@ -347,6 +464,30 @@ The default Compose configuration includes:
 These mounts are useful under WSL but should be removed or changed for a native Linux installation.
 
 The `DISK_PATHS` environment variable controls the labels shown by Sparkboard.
+
+### What it reports
+
+![Sparkboard host and GPU overview](docs/screenshots/sparkboard-overview.png)
+
+For each container, Sparkboard tracks CPU %, memory (absolute and % of host), and published ports, for example:
+
+![Sparkboard storage and container list](docs/screenshots/sparkboard-containers.png)
+
+| Container | Published port |
+|---|---|
+| openwebui | 3000→8080 |
+| llama | 8000→8000 |
+| comfyui | 8188→8188 |
+| kokoro | 8880→8880 |
+| jupyter | 8888→8888 |
+| searxng | 8080→8080 |
+| sparkboard | 9102→9102 |
+| tika, playwright, postgres, open-terminal | not published |
+
+On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, power draw, and SM/memory clocks over time, plus a per-core CPU load breakdown and network/disk throughput history.
+
+![Sparkboard GPU metrics](docs/screenshots/sparkboard-gpu-metrics.png)
+![Sparkboard CPU, network, and disk load](docs/screenshots/sparkboard-system-load.png)
 
 ## Ports
 
@@ -410,4 +551,3 @@ Model weights, generated data, secrets, databases, and other machine-specific st
 ## License
 
 Choose a license appropriate for the code you publish. The repository itself is primarily configuration and integration glue around the respective upstream projects; each upstream component remains subject to its own license and terms.
-](https://github.com/jtalbott22/Self-hosted-AI-Stack)
