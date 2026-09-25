@@ -4,11 +4,13 @@ author: Josh Talbott
 author_url: https://joshuaallentalbott.com
 description: >
     Run any Jupyter notebook on demand and view every output - text, tables,
-    plots, HTML, embedded video, and errors - as a single swipeable carousel
-    rendered inline in chat. Companion to the Lens / Data Lens tools; same
-    pattern (LLM infers intent + confirms, Python does the work, HTML renders
-    the result without being re-typed by the model).
-version: 0.2.0
+    plots, HTML, embedded video, and errors - as a swipeable carousel rendered
+    inline in chat. By default each heading section of the notebook becomes ONE
+    page (heading + notes + code + outputs stacked, scroll down inside the page),
+    like collapsing a heading in Jupyter. Companion to the Lens / Data Lens
+    tools; same pattern (LLM infers intent + confirms, Python does the work,
+    HTML renders the result without being re-typed by the model).
+version: 0.3.0
 requirements: nbformat,pydantic,aiohttp,websockets
 """
 
@@ -27,7 +29,6 @@ from pydantic import BaseModel, Field
 import nbformat
 import aiohttp
 import websockets
-
 
 # ============================================================================
 # Small utilities
@@ -91,6 +92,7 @@ def safe_json_dumps(obj: Any) -> str:
 # where your packages actually live and no filesystem mount is needed.
 # ============================================================================
 
+
 class JupyterClient:
     def __init__(self, base_url: str, token: str, verify_ssl: bool = True):
         self.base_url = base_url.rstrip("/")
@@ -105,22 +107,27 @@ class JupyterClient:
 
     def _ws_base(self) -> str:
         if self.base_url.startswith("https://"):
-            return "wss://" + self.base_url[len("https://"):]
+            return "wss://" + self.base_url[len("https://") :]
         if self.base_url.startswith("http://"):
-            return "ws://" + self.base_url[len("http://"):]
+            return "ws://" + self.base_url[len("http://") :]
         return self.base_url
 
     def _contents_url(self, path: str) -> str:
         return f"{self.base_url}/api/contents/{quote(path, safe='/')}"
 
-    async def get_contents(self, session, path: str, content: bool = True, type_hint: Optional[str] = None):
+    async def get_contents(
+        self, session, path: str, content: bool = True, type_hint: Optional[str] = None
+    ):
         params = {}
         if content:
             params["content"] = "1"
         if type_hint:
             params["type"] = type_hint
         async with session.get(
-            self._contents_url(path), headers=self._headers(), params=params, ssl=self.verify_ssl
+            self._contents_url(path),
+            headers=self._headers(),
+            params=params,
+            ssl=self.verify_ssl,
         ) as resp:
             if resp.status == 404:
                 return None
@@ -129,15 +136,20 @@ class JupyterClient:
 
     async def put_contents(self, session, path: str, body: dict):
         async with session.put(
-            self._contents_url(path), headers=self._headers(), json=body, ssl=self.verify_ssl
+            self._contents_url(path),
+            headers=self._headers(),
+            json=body,
+            ssl=self.verify_ssl,
         ) as resp:
             resp.raise_for_status()
             return await resp.json()
 
     async def start_kernel(self, session, kernel_name: str) -> dict:
         async with session.post(
-            f"{self.base_url}/api/kernels", headers=self._headers(),
-            json={"name": kernel_name}, ssl=self.verify_ssl,
+            f"{self.base_url}/api/kernels",
+            headers=self._headers(),
+            json={"name": kernel_name},
+            ssl=self.verify_ssl,
         ) as resp:
             resp.raise_for_status()
             return await resp.json()
@@ -145,7 +157,9 @@ class JupyterClient:
     async def delete_kernel(self, session, kernel_id: str) -> None:
         try:
             async with session.delete(
-                f"{self.base_url}/api/kernels/{kernel_id}", headers=self._headers(), ssl=self.verify_ssl
+                f"{self.base_url}/api/kernels/{kernel_id}",
+                headers=self._headers(),
+                ssl=self.verify_ssl,
             ):
                 pass
         except Exception:
@@ -158,13 +172,19 @@ class JupyterClient:
         return f"{self._ws_base()}/api/kernels/{kernel_id}/channels?{qs}"
 
 
-async def _scan_root(client: "JupyterClient", session, root_path: str, found: dict) -> Optional[str]:
+async def _scan_root(
+    client: "JupyterClient", session, root_path: str, found: dict
+) -> Optional[str]:
     """Recursively lists a content-root-relative folder via the Contents API.
     Returns None on success, or a human-readable problem description."""
-    data = await client.get_contents(session, root_path, content=True, type_hint="directory")
+    data = await client.get_contents(
+        session, root_path, content=True, type_hint="directory"
+    )
     if data is None:
-        return (f'"{root_path or "/"}" was not found on the Jupyter server (404) - check the '
-                f'path is relative to the server\'s own content root, not a host filesystem path.')
+        return (
+            f'"{root_path or "/"}" was not found on the Jupyter server (404) - check the '
+            f"path is relative to the server's own content root, not a host filesystem path."
+        )
     if data.get("type") != "directory":
         return f'"{root_path}" exists on the Jupyter server but is not a directory.'
     for item in data.get("content", []):
@@ -183,7 +203,9 @@ async def _scan_root(client: "JupyterClient", session, root_path: str, found: di
     return None
 
 
-async def discover_notebooks_remote(client: "JupyterClient", session, roots: list, history: dict):
+async def discover_notebooks_remote(
+    client: "JupyterClient", session, roots: list, history: dict
+):
     found = {}
     problems = []
     for root in roots:
@@ -209,7 +231,11 @@ def resolve_notebook_remote(name: str, notebooks: list) -> tuple:
 
     # 1) exact content-path match
     for nb in notebooks:
-        if nb["path"] == name or nb["path"] == want_path or nb["path"].lstrip("/") == want_path.lstrip("/"):
+        if (
+            nb["path"] == name
+            or nb["path"] == want_path
+            or nb["path"].lstrip("/") == want_path.lstrip("/")
+        ):
             return nb, []
 
     # 2) exact stem match (case-insensitive), unique
@@ -232,6 +258,7 @@ def resolve_notebook_remote(name: str, notebooks: list) -> tuple:
 # ============================================================================
 # Run history (so list_notebooks can say "last run 2h ago, took 45s")
 # ============================================================================
+
 
 def load_history(path: Path) -> dict:
     if not path.exists():
@@ -268,12 +295,34 @@ IMAGE_MIME_PRIORITY = ["image/svg+xml", "image/png", "image/jpeg", "image/gif"]
 VIDEO_MIMES = ["video/mp4", "video/webm", "video/ogg"]
 
 
+def _cell_source(cell) -> str:
+    src = cell.get("source", "")
+    return "".join(src) if isinstance(src, list) else src
+
+
 def _heading_text(markdown_source: str) -> Optional[str]:
     for line in markdown_source.splitlines():
         line = line.strip()
         if line.startswith("#"):
             return line.lstrip("#").strip()
     return None
+
+
+def _leading_heading(markdown_source: str) -> tuple:
+    """If the first non-blank line of a markdown cell is an ATX heading, return
+    (level, cleaned_heading_text, remaining_body). Otherwise (0, None, source).
+    Only a LEADING heading starts a section - that's what Jupyter's collapse
+    caret keys off too."""
+    lines = markdown_source.splitlines()
+    for n, line in enumerate(lines):
+        if not line.strip():
+            continue
+        m = re.match(r"^\s*(#{1,6})\s+(.*?)\s*#*\s*$", line)
+        if m:
+            text = re.sub(r"[*`]", "", m.group(2)).strip()
+            return len(m.group(1)), text, "\n".join(lines[n + 1 :])
+        break
+    return 0, None, markdown_source
 
 
 def _tiny_markdown_to_html(md: str) -> str:
@@ -301,7 +350,11 @@ def _tiny_markdown_to_html(md: str) -> str:
         text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
         text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
         text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", text)
-        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2" target="_blank" rel="noopener">\1</a>', text)
+        text = re.sub(
+            r"\[([^\]]+)\]\(([^)]+)\)",
+            r'<a href="\2" target="_blank" rel="noopener">\1</a>',
+            text,
+        )
         return text
 
     for raw in lines:
@@ -379,22 +432,30 @@ def _mime_value(data: dict, mime: str) -> str:
     return v
 
 
-def cell_to_pages(cell, index: int, section: Optional[str], include_markdown: bool) -> list[dict]:
+def cell_to_pages(
+    cell, index: int, section: Optional[str], include_markdown: bool
+) -> list[dict]:
     pages = []
-    source = "".join(cell.get("source", [])) if isinstance(cell.get("source"), list) else cell.get("source", "")
+    source = (
+        "".join(cell.get("source", []))
+        if isinstance(cell.get("source"), list)
+        else cell.get("source", "")
+    )
 
     if cell["cell_type"] == "markdown":
         heading = _heading_text(source)
         body_lines = [l for l in source.splitlines() if not l.strip().startswith("#")]
         has_body = any(l.strip() and l.strip() != "---" for l in body_lines)
         if include_markdown and (has_body or not heading):
-            pages.append({
-                "type": "markdown",
-                "title": heading or f"Notes - cell {index}",
-                "section": section,
-                "content": _tiny_markdown_to_html(source),
-                "cell_index": index,
-            })
+            pages.append(
+                {
+                    "type": "markdown",
+                    "title": heading or f"Notes - cell {index}",
+                    "section": section,
+                    "content": _tiny_markdown_to_html(source),
+                    "cell_index": index,
+                }
+            )
         return pages
 
     if cell["cell_type"] != "code":
@@ -435,9 +496,20 @@ def cell_to_pages(cell, index: int, section: Optional[str], include_markdown: bo
                 # Prefer a plain image fallback if one was also captured
                 png = data.get("image/png")
                 if png:
-                    rich_pages.append({"type": "image", "mime": "image/png", "content": png})
+                    rich_pages.append(
+                        {"type": "image", "mime": "image/png", "content": png}
+                    )
                 else:
-                    rich_pages.append({"type": "plotly", "content": json.dumps(value) if not isinstance(value, str) else value})
+                    rich_pages.append(
+                        {
+                            "type": "plotly",
+                            "content": (
+                                json.dumps(value)
+                                if not isinstance(value, str)
+                                else value
+                            ),
+                        }
+                    )
             elif mime == "text/plain":
                 text = value if isinstance(value, str) else "".join(value)
                 rich_pages.append({"type": "text", "content": text})
@@ -454,15 +526,17 @@ def cell_to_pages(cell, index: int, section: Optional[str], include_markdown: bo
     code_snippet = source.strip()
 
     if stream_text:
-        pages.append({
-            "type": "stream",
-            "title": base_title,
-            "section": section,
-            "content": clean_stream_text("\n".join(stream_text)),
-            "has_stderr": stderr_present,
-            "code": code_snippet,
-            "cell_index": index,
-        })
+        pages.append(
+            {
+                "type": "stream",
+                "title": base_title,
+                "section": section,
+                "content": clean_stream_text("\n".join(stream_text)),
+                "has_stderr": stderr_present,
+                "code": code_snippet,
+                "cell_index": index,
+            }
+        )
 
     for i, rp in enumerate(rich_pages):
         rp["title"] = base_title if len(rich_pages) == 1 else f"{base_title}.{i+1}"
@@ -482,16 +556,122 @@ def cell_to_pages(cell, index: int, section: Optional[str], include_markdown: bo
 
 
 def notebook_to_pages(nb, include_markdown: bool = True) -> list[dict]:
+    """Original layout: one carousel page per cell output."""
     pages = []
     current_section = None
     for i, cell in enumerate(nb.cells):
         if cell["cell_type"] == "markdown":
-            src = "".join(cell.get("source", [])) if isinstance(cell.get("source"), list) else cell.get("source", "")
+            src = (
+                "".join(cell.get("source", []))
+                if isinstance(cell.get("source"), list)
+                else cell.get("source", "")
+            )
             h = _heading_text(src)
             if h:
                 current_section = h
         pages.extend(cell_to_pages(cell, i, current_section, include_markdown))
     return pages
+
+
+def notebook_to_sections(
+    nb,
+    include_markdown: bool = True,
+    section_level: int = 2,
+    code_mode: str = "collapsed",
+) -> list[dict]:
+    """Section layout: one carousel page per heading section - the same span a
+    Jupyter collapse caret would fold. A markdown cell whose FIRST line is a
+    heading at level <= section_level starts a new page; deeper headings stay
+    inline. Every cell up to the next such heading (notes, code, outputs) is
+    stacked on that one page, in notebook order.
+
+    code_mode: "collapsed" (default; every code block folded behind a
+    "view code" button), "expanded" (code shown; setup cells with no output
+    stay folded), or "hidden" (no code at all)."""
+    section_level = max(1, min(6, int(section_level or 2)))
+    if code_mode not in ("expanded", "collapsed", "hidden"):
+        code_mode = "collapsed"
+
+    pages: list[dict] = []
+    stack: dict = {}  # heading level -> heading text, for the "parent" pill
+
+    def new_page(title, level, parent, cell_index):
+        return {
+            "type": "section",
+            "title": title,
+            "level": level,
+            "parent": parent,
+            "blocks": [],
+            "cell_index": cell_index,
+        }
+
+    def flush(page):
+        if page["blocks"]:
+            pages.append(page)
+
+    current = new_page("Overview", 0, None, None)
+
+    for i, cell in enumerate(nb.cells):
+        ctype = cell.get("cell_type")
+        src = _cell_source(cell)
+
+        if ctype == "markdown":
+            level, text, body = _leading_heading(src)
+            if level and level <= section_level:
+                flush(current)
+                for k in [k for k in stack if k >= level]:
+                    del stack[k]
+                parent = stack[max(stack)] if stack else None
+                stack[level] = text
+                current = new_page(text, level, parent, i)
+                if include_markdown and body.strip():
+                    current["blocks"].append(
+                        {"type": "md", "content": _tiny_markdown_to_html(body)}
+                    )
+            elif include_markdown and src.strip():
+                current["blocks"].append(
+                    {"type": "md", "content": _tiny_markdown_to_html(src)}
+                )
+            continue
+
+        if ctype != "code":
+            continue
+
+        code = src.strip()
+        outputs = cell_to_pages(cell, i, None, False)  # output pages for this cell
+
+        if code_mode != "hidden" and code:
+            current["blocks"].append(
+                {
+                    "type": "codesrc",
+                    "content": code,
+                    "lines": code.count("\n") + 1,
+                    # setup cells (imports etc.) with nothing to show stay folded
+                    "open": code_mode == "expanded" and bool(outputs),
+                }
+            )
+        for p in outputs:
+            block = {
+                k: v
+                for k, v in p.items()
+                if k not in ("title", "section", "code", "cell_index")
+            }
+            current["blocks"].append(block)
+        if current["cell_index"] is None:
+            current["cell_index"] = i
+
+    flush(current)
+    return pages
+
+
+def _flat_outputs(pages: list[dict]):
+    """Yield every renderable unit, whether pages are per-cell or per-section."""
+    for p in pages:
+        if p.get("type") == "section":
+            for b in p.get("blocks", []):
+                yield b
+        else:
+            yield p
 
 
 # ============================================================================
@@ -511,7 +691,7 @@ _CAROUSEL_TEMPLATE = r"""
   color:var(--text);background:var(--bg);
   /* fill the screen: dvh tracks mobile browser chrome as it hides/shows */
   height:100vh;height:100dvh;width:100%;
-  display:flex;flex-direction:column;overflow:hidden;
+  display:flex;flex-direction:column;overflow:hidden;position:relative;
   /* keep content clear of notch / home indicator */
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   box-sizing:border-box;
@@ -660,6 +840,52 @@ _CAROUSEL_TEMPLATE = r"""
 .nblens-error pre{white-space:pre-wrap;word-break:break-word;
   font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5;margin:0;}
 
+/* ---------- section pages: notes + code + outputs stacked on ONE page ----------
+   The whole page scrolls vertically. Big outputs (long logs, wide tables, long
+   code) are height-capped and scroll inside their own box so one huge output
+   can't bury everything below it. Images sit inline; tap one to open the
+   full-screen zoom viewer (inline pinch would fight vertical scrolling). */
+.nblens-page.sec{padding-bottom:0;}
+.nblens-sec-scroll{
+  flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:0 2px 18px 0;
+}
+.nblens-sec-title{font-size:19px;font-weight:650;letter-spacing:-.01em;line-height:1.25;margin:0 0 10px;}
+.nblens-blk{margin:0 0 12px;}
+.nblens-blk > .nblens-md > :first-child{margin-top:0;}
+.nblens-sec .nblens-code-toggle{margin-bottom:6px;}
+.nblens-sec .nblens-code-drawer{max-height:280px;}
+.nblens-sec .nblens-pre{max-height:360px;overflow:auto;overscroll-behavior:contain;}
+.nblens-sec .nblens-html-wrap{max-height:420px;}
+.nblens-sec .nblens-error{max-height:360px;}
+.nblens-sec-media{
+  display:block;width:100%;background:var(--panel2);border:1px solid var(--border);
+  border-radius:10px;padding:6px;cursor:zoom-in;
+}
+.nblens-sec-media img,.nblens-sec-media svg{
+  display:block;max-width:100%;height:auto;margin:0 auto;border-radius:6px;
+}
+.nblens-sec-media-hint{font-size:10.5px;color:var(--muted);text-align:center;margin-top:4px;}
+
+/* ---------- full-screen image viewer (opened by tapping an inline image) ---------- */
+.nblens-lb{
+  display:none;position:absolute;left:0;right:0;top:0;bottom:0;z-index:20;
+  background:var(--bg);flex-direction:column;outline:none;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.nblens-lb.open{display:flex;}
+.nblens-lb-bar{
+  flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:10px 12px;
+  background:var(--panel2);border-bottom:1px solid var(--border);
+  font-size:11.5px;color:var(--muted);
+}
+.nblens-lb-close{
+  background:var(--panel);color:var(--text);border:1px solid var(--border);
+  border-radius:9px;padding:0 14px;min-height:38px;font-size:13px;cursor:pointer;font-family:inherit;
+}
+.nblens-lb-close:active{background:var(--raised);}
+.nblens-lb-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:10px 12px;}
+
 /* ---------- nav ---------- */
 .nblens-nav{
   flex:0 0 auto;display:flex;align-items:center;gap:12px;
@@ -701,6 +927,7 @@ _CAROUSEL_TEMPLATE = r"""
   var pages = JSON.parse(document.getElementById("nblens-data-" + uid).textContent);
   var track = document.getElementById("nblens-track-" + uid);
   var vp    = document.getElementById("nblens-vp-" + uid);
+  var root  = vp.closest(".nblens-root");
   var jump  = document.getElementById("nblens-jump-" + uid);
   var prevBtn = document.getElementById("nblens-prev-" + uid);
   var nextBtn = document.getElementById("nblens-next-" + uid);
@@ -710,12 +937,17 @@ _CAROUSEL_TEMPLATE = r"""
 
   function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
-  function streamHtml(p){
-    var lines = esc(p.content).split("\n").map(function(l){
+  function streamLines(content){
+    return esc(content).split("\n").map(function(l){
       return l.indexOf("[stderr]") === 0 ? '<span class="stderr-line">'+l+'</span>' : l;
     }).join("\n");
-    return '<div class="nblens-scroll"><pre class="nblens-pre">' + lines + '</pre></div>';
   }
+
+  function streamHtml(p){
+    return '<div class="nblens-scroll"><pre class="nblens-pre">' + streamLines(p.content) + '</pre></div>';
+  }
+
+  var PLOTLY_NOTE = 'Interactive Plotly output. Set the PLOTLY_CDN_URL valve to render these interactively; otherwise a static PNG is used when the notebook produced one.';
 
   function bodyHtml(p){
     if(p.type === "image"){
@@ -739,12 +971,53 @@ _CAROUSEL_TEMPLATE = r"""
       return '<div class="nblens-error"><h4>'+esc(p.ename)+': '+esc(p.evalue)+'</h4><pre>'+esc(p.content)+'</pre></div>';
     }
     if(p.type === "plotly"){
-      return '<div class="nblens-scroll"><pre class="nblens-pre">Interactive Plotly output. Set the PLOTLY_CDN_URL valve to render these interactively; otherwise a static PNG is used when the notebook produced one.</pre></div>';
+      return '<div class="nblens-scroll"><pre class="nblens-pre">' + PLOTLY_NOTE + '</pre></div>';
     }
     return streamHtml(p);
   }
 
+  /* one block of a section page (notes / code / a single output) */
+  function blockHtml(b){
+    var t = b.type;
+    if(t === "md"){
+      return '<div class="nblens-blk"><div class="nblens-md">' + b.content + '</div></div>';
+    }
+    if(t === "codesrc"){
+      return '<div class="nblens-blk">'
+           + '<button class="nblens-code-toggle" type="button">&lt;/&gt; view code</button>'
+           + '<div class="nblens-code-drawer' + (b.open ? ' open' : '') + '">' + esc(b.content) + '</div></div>';
+    }
+    if(t === "image"){
+      return '<div class="nblens-blk"><div class="nblens-sec-media"><img src="data:'+b.mime+';base64,'+b.content+'" loading="lazy" alt=""></div>'
+           + '<div class="nblens-sec-media-hint">tap to zoom</div></div>';
+    }
+    if(t === "image_svg"){
+      return '<div class="nblens-blk"><div class="nblens-sec-media">'+b.content+'</div>'
+           + '<div class="nblens-sec-media-hint">tap to zoom</div></div>';
+    }
+    if(t === "video"){
+      return '<div class="nblens-blk"><video controls playsinline style="width:100%;display:block;border-radius:10px" src="data:'+b.mime+';base64,'+b.content+'"></video></div>';
+    }
+    if(t === "html"){
+      return '<div class="nblens-blk"><div class="nblens-html-wrap">' + b.content + '</div></div>';
+    }
+    if(t === "error"){
+      return '<div class="nblens-blk"><div class="nblens-error"><h4>'+esc(b.ename)+': '+esc(b.evalue)+'</h4><pre>'+esc(b.content)+'</pre></div></div>';
+    }
+    if(t === "plotly"){
+      return '<div class="nblens-blk"><pre class="nblens-pre">' + PLOTLY_NOTE + '</pre></div>';
+    }
+    return '<div class="nblens-blk"><pre class="nblens-pre">' + streamLines(b.content) + '</pre></div>';
+  }
+
   function pageInner(p){
+    if(p.type === "section"){
+      var s = '<div class="nblens-sec-scroll">';
+      if(p.parent){ s += '<div class="nblens-section-pill">'+esc(p.parent)+'</div>'; }
+      s += '<div class="nblens-sec-title">'+esc(p.title||"")+'</div>';
+      (p.blocks||[]).forEach(function(b){ s += blockHtml(b); });
+      return s + '</div>';
+    }
     var h = "";
     if(p.section){ h += '<div class="nblens-section-pill">'+esc(p.section)+'</div>'; }
     h += '<div class="nblens-page-label">' + esc(p.title||"") + '</div>';
@@ -758,24 +1031,20 @@ _CAROUSEL_TEMPLATE = r"""
 
   pages.forEach(function(p){
     var div = document.createElement("div");
-    div.className = "nblens-page";
+    div.className = "nblens-page" + (p.type === "section" ? " sec" : "");
     div.innerHTML = pageInner(p);
     track.appendChild(div);
-  });
-
-  // delegated: code drawer toggle
-  track.addEventListener("click", function(e){
-    var t = e.target.closest ? e.target.closest(".nblens-code-toggle") : null;
-    if(t){ var d = t.nextElementSibling; if(d) d.classList.toggle("open"); }
   });
 
   /* ---- image zoom: transform-based, so panning works once zoomed ----
      Positions are tracked as the media's absolute top-left (px,py) inside the
      wrapper, which makes the pinch-anchor and clamping math straightforward.
-     Gestures stopPropagation so a pan doesn't also turn the carousel page.   */
+     Gestures stopPropagation so a pan doesn't also turn the carousel page.
+     Returns a destroy() that unhooks the window-level listeners (needed
+     because the full-screen viewer creates a fresh one each time it opens). */
   function setupZoom(wrap){
     var media = wrap.querySelector("img, svg");
-    if(!media) return;
+    if(!media) return function(){};
     var badge = document.createElement("div");
     badge.className = "nblens-zoom-badge";
     wrap.appendChild(badge);
@@ -825,11 +1094,12 @@ _CAROUSEL_TEMPLATE = r"""
       media.addEventListener("load", reset);
     }
     setTimeout(reset, 0);
-    window.addEventListener("resize", function(){
+    function onResize(){
       var wasZoomed = s > 1.01;
       measure();
       if(wasZoomed) apply(); else reset();
-    });
+    }
+    window.addEventListener("resize", onResize);
 
     var mode = null, startDist = 0, startS = 1, lastX = 0, lastY = 0, lastTap = 0;
 
@@ -905,16 +1175,73 @@ _CAROUSEL_TEMPLATE = r"""
     wrap.addEventListener("mousedown", function(e){
       if(s > 1.01){ mDown = true; lastX = e.clientX; lastY = e.clientY; e.preventDefault(); }
     });
-    window.addEventListener("mousemove", function(e){
+    function onMouseMove(e){
       if(!mDown) return;
       px += e.clientX - lastX; py += e.clientY - lastY;
       lastX = e.clientX; lastY = e.clientY;
       apply();
-    });
-    window.addEventListener("mouseup", function(){ mDown = false; });
+    }
+    function onMouseUp(){ mDown = false; }
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    return function destroy(){
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
   }
 
-  Array.prototype.forEach.call(track.querySelectorAll(".nblens-img-wrap"), setupZoom);
+  // per-cell layout: images are zoomable right in the page
+  Array.prototype.forEach.call(track.querySelectorAll(".nblens-img-wrap"), function(w){ setupZoom(w); });
+
+  /* ---- full-screen image viewer, used by section pages ---- */
+  var lb = document.createElement("div");
+  lb.className = "nblens-lb";
+  lb.tabIndex = -1;
+  lb.innerHTML = '<div class="nblens-lb-bar"><button class="nblens-lb-close" type="button">&#10005; Close</button>'
+               + '<span>pinch or double-tap to zoom &middot; drag to pan</span></div>'
+               + '<div class="nblens-lb-body"></div>';
+  root.appendChild(lb);
+  var lbBody = lb.querySelector(".nblens-lb-body");
+  var lbDestroy = null;
+
+  function openLightbox(media){
+    var src = media.querySelector("img, svg");
+    if(!src) return;
+    var el;
+    if(src.tagName.toLowerCase() === "img"){
+      el = document.createElement("img");
+      el.src = src.src; el.alt = "";
+    } else {
+      el = src.cloneNode(true);
+    }
+    var wrap = document.createElement("div");
+    wrap.className = "nblens-img-wrap";
+    wrap.appendChild(el);
+    lbBody.innerHTML = "";
+    lbBody.appendChild(wrap);
+    lb.classList.add("open");
+    lbDestroy = setupZoom(wrap);
+    lb.focus();
+  }
+  function closeLightbox(){
+    if(lbDestroy){ lbDestroy(); lbDestroy = null; }
+    lb.classList.remove("open");
+    lbBody.innerHTML = "";
+  }
+  lb.querySelector(".nblens-lb-close").addEventListener("click", closeLightbox);
+  lb.addEventListener("keydown", function(e){
+    if(e.key === "Escape"){ closeLightbox(); e.preventDefault(); }
+  });
+
+  // delegated clicks: code drawer toggle + tap-to-zoom on inline images
+  track.addEventListener("click", function(e){
+    var t = e.target.closest ? e.target.closest(".nblens-code-toggle") : null;
+    if(t){ var d = t.nextElementSibling; if(d) d.classList.toggle("open"); return; }
+    var m = e.target.closest ? e.target.closest(".nblens-sec-media") : null;
+    if(m) openLightbox(m);
+  });
 
   // section jump menu
   var seen = {};
@@ -922,7 +1249,12 @@ _CAROUSEL_TEMPLATE = r"""
   opt0.value = "-1"; opt0.textContent = "Jump to\u2026";
   jump.appendChild(opt0);
   pages.forEach(function(p, i){
-    if(p.section && !seen[p.section]){
+    if(p.type === "section"){
+      var so = document.createElement("option");
+      so.value = String(i);
+      so.textContent = (p.parent ? "\u2003" : "") + (p.title || ("Section " + (i+1)));
+      jump.appendChild(so);
+    } else if(p.section && !seen[p.section]){
       seen[p.section] = 1;
       var o = document.createElement("option");
       o.value = String(i); o.textContent = p.section;
@@ -954,8 +1286,8 @@ _CAROUSEL_TEMPLATE = r"""
 
   /* ---- swipe: follows the finger, and yields to inner scrolling ----
      Axis is locked on the first real movement. A horizontal drag that starts
-     inside something scrollable horizontally (a wide table) scrolls that
-     instead of turning the page, until it hits its own edge.               */
+     inside something scrollable horizontally (a wide table, a code block)
+     scrolls that instead of turning the page, until it hits its own edge.  */
   var startX=null, startY=null, axis=null, dragging=false, width=1, hScroller=null;
 
   function horizontalScroller(el){
@@ -1029,10 +1361,19 @@ _CAROUSEL_TEMPLATE = r"""
 """
 
 
-def build_carousel_html(pages: list[dict], title: str, meta_line: str, theme: str = "auto") -> str:
+def build_carousel_html(
+    pages: list[dict], title: str, meta_line: str, theme: str = "auto"
+) -> str:
     uid = f"nb{int(time.time()*1000) % 10_000_000}"
     if not pages:
-        pages = [{"type": "text", "title": "No output", "content": "This notebook produced no captured output.", "section": None}]
+        pages = [
+            {
+                "type": "text",
+                "title": "No output",
+                "content": "This notebook produced no captured output.",
+                "section": None,
+            }
+        ]
     if theme not in ("dark", "light", "auto"):
         theme = "auto"
     html = _CAROUSEL_TEMPLATE
@@ -1084,7 +1425,10 @@ def wrap_as_iframe(html: str, height_px: int = 640) -> str:
 # Execution (against a remote kernel over the Jupyter Server WebSocket API)
 # ============================================================================
 
-async def _execute_one_cell(ws, session_id: str, source: str, cell: dict, timeout: int) -> bool:
+
+async def _execute_one_cell(
+    ws, session_id: str, source: str, cell: dict, timeout: int
+) -> bool:
     """Sends one execute_request and collects iopub outputs into cell["outputs"]
     until that request's kernel goes idle. Returns True if the cell errored."""
     msg_id = uuid.uuid4().hex
@@ -1126,33 +1470,41 @@ async def _execute_one_cell(ws, session_id: str, source: str, cell: dict, timeou
             mtype = data.get("msg_type") or data.get("header", {}).get("msg_type")
             content = data.get("content", {})
             if mtype == "stream":
-                cell["outputs"].append({
-                    "output_type": "stream",
-                    "name": content.get("name", "stdout"),
-                    "text": content.get("text", ""),
-                })
+                cell["outputs"].append(
+                    {
+                        "output_type": "stream",
+                        "name": content.get("name", "stdout"),
+                        "text": content.get("text", ""),
+                    }
+                )
             elif mtype == "display_data":
-                cell["outputs"].append({
-                    "output_type": "display_data",
-                    "data": content.get("data", {}),
-                    "metadata": content.get("metadata", {}),
-                })
+                cell["outputs"].append(
+                    {
+                        "output_type": "display_data",
+                        "data": content.get("data", {}),
+                        "metadata": content.get("metadata", {}),
+                    }
+                )
             elif mtype == "execute_result":
                 cell["execution_count"] = content.get("execution_count")
-                cell["outputs"].append({
-                    "output_type": "execute_result",
-                    "data": content.get("data", {}),
-                    "metadata": content.get("metadata", {}),
-                    "execution_count": content.get("execution_count"),
-                })
+                cell["outputs"].append(
+                    {
+                        "output_type": "execute_result",
+                        "data": content.get("data", {}),
+                        "metadata": content.get("metadata", {}),
+                        "execution_count": content.get("execution_count"),
+                    }
+                )
             elif mtype == "error":
                 had_error = True
-                cell["outputs"].append({
-                    "output_type": "error",
-                    "ename": content.get("ename", ""),
-                    "evalue": content.get("evalue", ""),
-                    "traceback": content.get("traceback", []),
-                })
+                cell["outputs"].append(
+                    {
+                        "output_type": "error",
+                        "ename": content.get("ename", ""),
+                        "evalue": content.get("evalue", ""),
+                        "traceback": content.get("traceback", []),
+                    }
+                )
             elif mtype == "clear_output":
                 if not content.get("wait"):
                     cell["outputs"] = []
@@ -1187,14 +1539,21 @@ async def execute_notebook_remote(
             client.start_kernel(session, kernel_name), timeout=kernel_start_timeout
         )
     except Exception as e:
-        return nb, 0.0, False, f"Couldn't start a \"{kernel_name}\" kernel on the Jupyter server: {e}"
+        return (
+            nb,
+            0.0,
+            False,
+            f'Couldn\'t start a "{kernel_name}" kernel on the Jupyter server: {e}',
+        )
 
     kernel_id = kernel_info["id"]
     session_id = uuid.uuid4().hex
     ws_url = client.kernel_ws_url(kernel_id, session_id)
 
     try:
-        async with websockets.connect(ws_url, open_timeout=kernel_start_timeout, max_size=None) as ws:
+        async with websockets.connect(
+            ws_url, open_timeout=kernel_start_timeout, max_size=None
+        ) as ws:
             for n, i in enumerate(code_cells):
                 if progress_cb:
                     await progress_cb(n + 1, total, i)
@@ -1205,7 +1564,9 @@ async def execute_notebook_remote(
                 if isinstance(source, list):
                     source = "".join(source)
                 try:
-                    had_error = await _execute_one_cell(ws, session_id, source, cell, cell_timeout)
+                    had_error = await _execute_one_cell(
+                        ws, session_id, source, cell, cell_timeout
+                    )
                 except asyncio.TimeoutError:
                     ok = False
                     err_msg = f"Cell {i} timed out after {cell_timeout}s waiting on the kernel"
@@ -1228,31 +1589,32 @@ async def execute_notebook_remote(
 # Open WebUI Tool
 # ============================================================================
 
+
 class Tools:
     class Valves(BaseModel):
         JUPYTER_BASE_URL: str = Field(
             default="http://jupyter:8888",
             description="Base URL of your Jupyter Server, reachable from wherever this tool's "
-                        "Python code runs (a Docker service name/port if it's a sibling "
-                        "container, not necessarily localhost). Same server your JupyterLab "
-                        "integration already talks to.",
+            "Python code runs (a Docker service name/port if it's a sibling "
+            "container, not necessarily localhost). Same server your JupyterLab "
+            "integration already talks to.",
         )
         JUPYTER_TOKEN: str = Field(
             default="",
             description="Jupyter Server auth token (the same one used to open JupyterLab in a "
-                        "browser, or from `jupyter server list`). Leave empty only if the "
-                        "server has auth disabled.",
+            "browser, or from `jupyter server list`). Leave empty only if the "
+            "server has auth disabled.",
         )
         VERIFY_SSL: bool = Field(
             default=True,
             description="Verify TLS certificates if JUPYTER_BASE_URL is https. Turn off only "
-                        "for a self-signed cert on a trusted internal server.",
+            "for a self-signed cert on a trusted internal server.",
         )
         NOTEBOOKS_PATH: str = Field(
             default="",
             description="Folder to scan for notebooks, as a path RELATIVE TO THE JUPYTER "
-                        "SERVER'S OWN CONTENT ROOT - not a host filesystem path. Leave empty "
-                        "to scan from that server's root.",
+            "SERVER'S OWN CONTENT ROOT - not a host filesystem path. Leave empty "
+            "to scan from that server's root.",
         )
         EXTRA_PATHS: str = Field(
             default="",
@@ -1261,14 +1623,14 @@ class Tools:
         EXECUTED_PATH: str = Field(
             default="",
             description="Content-root-relative folder to save timestamped executed copies "
-                        "into, if SAVE_EXECUTED_COPY is on. Defaults to the notebook's own "
-                        "folder + /executed. (Jupyter's Contents API rejects dot-prefixed "
-                        "directory names, so this can't be a hidden folder.)",
+            "into, if SAVE_EXECUTED_COPY is on. Defaults to the notebook's own "
+            "folder + /executed. (Jupyter's Contents API rejects dot-prefixed "
+            "directory names, so this can't be a hidden folder.)",
         )
         SAVE_EXECUTED_COPY: bool = Field(
             default=True,
             description="Save a timestamped copy of the notebook with fresh outputs back to "
-                        "the Jupyter server after each run.",
+            "the Jupyter server after each run.",
         )
         JUPYTER_KERNEL_NAME: str = Field(
             default="python3",
@@ -1285,18 +1647,41 @@ class Tools:
         HISTORY_FILE: str = Field(
             default="/tmp/notebook_lens_history.json",
             description="Local path (in this tool's own environment) for the small run-history "
-                        "log used by list_notebooks - unrelated to where notebooks/kernels live.",
+            "log used by list_notebooks - unrelated to where notebooks/kernels live.",
         )
         INCLUDE_MARKDOWN_PAGES: bool = Field(
             default=True,
-            description="Include markdown cells with real body text as their own carousel pages "
-                        "(section headers always update the section label regardless).",
+            description="Include markdown cells with real body text in the carousel (in "
+            "section mode they appear at the top of / inside their section's page; "
+            "in cell mode as their own pages). Section headings always label pages "
+            "regardless.",
+        )
+        PAGE_MODE: str = Field(
+            default="section",
+            description='Carousel layout. "section" = one page per heading section: the '
+            "heading, notes, code, and every output between that heading and the next "
+            "are stacked on one page you scroll down (like collapsing a heading with "
+            'the caret in Jupyter). "cell" = the original layout, one page per cell '
+            "output.",
+        )
+        SECTION_HEADING_LEVEL: int = Field(
+            default=2,
+            description="Section mode only: a markdown cell whose first line is a heading at "
+            "this level or higher starts a new page (1 = only '#', 2 = '#' and '##', "
+            "3 = down to '###', ...). Deeper headings stay inline on the page. Raise "
+            "it for finer pages, lower it for fewer, longer ones.",
+        )
+        CODE_MODE: str = Field(
+            default="collapsed",
+            description='Section mode only: "collapsed" folds every cell\'s code behind a '
+            '"view code" button, "expanded" shows code above its output (cells with no '
+            'output, like imports, stay folded), "hidden" leaves code out entirely.',
         )
         THEME: str = Field(
             default="auto",
             description="Carousel theme: auto (follow the viewing device's light/dark setting), "
-                        "dark, or light. Auto means the same saved page renders dark on a phone "
-                        "in dark mode and light on one in light mode.",
+            "dark, or light. Auto means the same saved page renders dark on a phone "
+            "in dark mode and light on one in light mode.",
         )
         PANEL_HEIGHT_PX: int = Field(
             default=640,
@@ -1305,9 +1690,9 @@ class Tools:
         PLOTLY_CDN_URL: str = Field(
             default="",
             description="Optional plotly.js CDN URL to enable interactive Plotly pages. "
-                        "Left empty by default to keep the panel fully self-contained/offline-safe; "
-                        "when empty, Plotly outputs fall back to their static PNG if the notebook "
-                        "produced one.",
+            "Left empty by default to keep the panel fully self-contained/offline-safe; "
+            "when empty, Plotly outputs fall back to their static PNG if the notebook "
+            "produced one.",
         )
 
     def __init__(self):
@@ -1333,7 +1718,11 @@ class Tools:
         return Path(self.valves.HISTORY_FILE).expanduser()
 
     def _client(self) -> "JupyterClient":
-        return JupyterClient(self.valves.JUPYTER_BASE_URL, self.valves.JUPYTER_TOKEN, self.valves.VERIFY_SSL)
+        return JupyterClient(
+            self.valves.JUPYTER_BASE_URL,
+            self.valves.JUPYTER_TOKEN,
+            self.valves.VERIFY_SSL,
+        )
 
     def _conn_error(self, e: Exception) -> str:
         return (
@@ -1366,19 +1755,25 @@ class Tools:
         client = self._client()
         try:
             async with aiohttp.ClientSession() as session:
-                notebooks, problems = await discover_notebooks_remote(client, session, self._roots(), history)
+                notebooks, problems = await discover_notebooks_remote(
+                    client, session, self._roots(), history
+                )
         except Exception as e:
             return self._conn_error(e)
 
         if not notebooks:
-            diagnostics = "\n".join(f"- {p}" for p in problems) if problems else (
-                "- The configured folder(s) exist and were read successfully, but contain no .ipynb files."
+            diagnostics = (
+                "\n".join(f"- {p}" for p in problems)
+                if problems
+                else (
+                    "- The configured folder(s) exist and were read successfully, but contain no .ipynb files."
+                )
             )
             return (
                 f"No notebooks found via {self.valves.JUPYTER_BASE_URL}.\n{diagnostics}\n\n"
                 f"Relay this diagnosis to the user plainly so they can fix NOTEBOOKS_PATH/EXTRA_PATHS "
                 f"(remember: these are paths relative to the Jupyter server's own content root, not "
-                f"host filesystem paths) - don't just say \"no notebooks found.\""
+                f'host filesystem paths) - don\'t just say "no notebooks found."'
             )
 
         lines = [f"Found {len(notebooks)} notebook(s):"]
@@ -1386,7 +1781,9 @@ class Tools:
             entry = f"- {nb['name']} ({nb['path']})"
             if nb.get("last_modified"):
                 try:
-                    mod_dt = datetime.fromisoformat(nb["last_modified"].replace("Z", "+00:00"))
+                    mod_dt = datetime.fromisoformat(
+                        nb["last_modified"].replace("Z", "+00:00")
+                    )
                     entry += f" - modified {human_ago(mod_dt)}"
                 except Exception:
                     pass
@@ -1447,7 +1844,9 @@ class Tools:
 
         try:
             async with aiohttp.ClientSession() as session:
-                notebooks, problems = await discover_notebooks_remote(client, session, self._roots(), history)
+                notebooks, problems = await discover_notebooks_remote(
+                    client, session, self._roots(), history
+                )
                 nb_ref, candidates = resolve_notebook_remote(notebook, notebooks)
 
                 if nb_ref is None:
@@ -1458,7 +1857,7 @@ class Tools:
                         )
                     detail = " ".join(problems) if problems else ""
                     return (
-                        f"No notebook matching \"{notebook}\" was found via {self.valves.JUPYTER_BASE_URL}. "
+                        f'No notebook matching "{notebook}" was found via {self.valves.JUPYTER_BASE_URL}. '
                         f"{detail} Call list_notebooks to see what's available. If the user knows this "
                         f"notebook exists on that server, tell them its folder needs to be added to "
                         f"NOTEBOOKS_PATH/EXTRA_PATHS - do not try to locate or execute it through any "
@@ -1476,13 +1875,17 @@ class Tools:
 
                 async def emit_status(desc: str, done: bool = False):
                     if __event_emitter__:
-                        await __event_emitter__({
-                            "type": "status",
-                            "data": {"description": desc, "done": done},
-                        })
+                        await __event_emitter__(
+                            {
+                                "type": "status",
+                                "data": {"description": desc, "done": done},
+                            }
+                        )
 
                 await emit_status(f"Loading {nb_ref['name']}...")
-                data = await client.get_contents(session, nb_ref["path"], content=True, type_hint="notebook")
+                data = await client.get_contents(
+                    session, nb_ref["path"], content=True, type_hint="notebook"
+                )
                 if data is None or "content" not in data:
                     return f"{nb_ref['path']} disappeared from the Jupyter server between listing and loading it."
                 try:
@@ -1491,7 +1894,8 @@ class Tools:
                     return f"Couldn't parse {nb_ref['path']} as a notebook: {e}"
 
                 kernel_name = (
-                    nb.metadata.get("kernelspec", {}).get("name") or self.valves.JUPYTER_KERNEL_NAME
+                    nb.metadata.get("kernelspec", {}).get("name")
+                    or self.valves.JUPYTER_KERNEL_NAME
                 )
 
                 async def progress_cb(n, total, cell_i):
@@ -1499,13 +1903,20 @@ class Tools:
 
                 try:
                     nb, duration, ok, err_msg = await execute_notebook_remote(
-                        client, session, nb, kernel_name,
+                        client,
+                        session,
+                        nb,
+                        kernel_name,
                         self.valves.CELL_TIMEOUT_SECONDS,
                         self.valves.KERNEL_START_TIMEOUT_SECONDS,
                         progress_cb,
                     )
                 except Exception as e:
-                    ok, err_msg, duration = False, f"Unexpected error running the notebook: {e}", 0.0
+                    ok, err_msg, duration = (
+                        False,
+                        f"Unexpected error running the notebook: {e}",
+                        0.0,
+                    )
 
                 # execute_notebook_remote appends plain dict outputs (fine for our own dict-style
                 # rendering below); nbformat.writes() needs real NotebookNode objects throughout,
@@ -1514,7 +1925,9 @@ class Tools:
 
                 record_run(self._history_path(), nb_ref["path"], duration, ok)
 
-                parent = nb_ref["path"].rsplit("/", 1)[0] if "/" in nb_ref["path"] else ""
+                parent = (
+                    nb_ref["path"].rsplit("/", 1)[0] if "/" in nb_ref["path"] else ""
+                )
                 exec_dir = self.valves.EXECUTED_PATH.strip("/") or (
                     f"{parent}/executed" if parent else "executed"
                 )
@@ -1533,15 +1946,35 @@ class Tools:
                     except Exception:
                         pass  # best-effort, never blocks showing results
 
-                pages = notebook_to_pages(nb, include_markdown=self.valves.INCLUDE_MARKDOWN_PAGES)
+                page_mode = (self.valves.PAGE_MODE or "section").strip().lower()
+                if page_mode == "cell":
+                    pages = notebook_to_pages(
+                        nb, include_markdown=self.valves.INCLUDE_MARKDOWN_PAGES
+                    )
+                    unit = "pages"
+                else:
+                    pages = notebook_to_sections(
+                        nb,
+                        include_markdown=self.valves.INCLUDE_MARKDOWN_PAGES,
+                        section_level=self.valves.SECTION_HEADING_LEVEL,
+                        code_mode=(self.valves.CODE_MODE or "collapsed").strip().lower(),
+                    )
+                    unit = "sections"
 
-                meta_bits = [human_duration(duration), f"{len(nb.cells)} cells", f"{len(pages)} pages"]
+                meta_bits = [
+                    human_duration(duration),
+                    f"{len(nb.cells)} cells",
+                    f"{len(pages)} {unit}",
+                ]
                 if not ok:
                     meta_bits.append("stopped on error")
                 meta_line = " - ".join(meta_bits)
 
                 html = build_carousel_html(
-                    pages, title=nb_ref["name"], meta_line=meta_line, theme=self.valves.THEME,
+                    pages,
+                    title=nb_ref["name"],
+                    meta_line=meta_line,
+                    theme=self.valves.THEME,
                 )
                 panel = wrap_as_iframe(html, height_px=self.valves.PANEL_HEIGHT_PX)
 
@@ -1550,9 +1983,13 @@ class Tools:
                 # bridges/pipes only forward "status" events, so this can silently do
                 # nothing. Never rely on it alone (see carousel_url below).
                 if __event_emitter__:
-                    await emit_status(f"Ran {nb_ref['name']} in {human_duration(duration)}", done=True)
+                    await emit_status(
+                        f"Ran {nb_ref['name']} in {human_duration(duration)}", done=True
+                    )
                     try:
-                        await __event_emitter__({"type": "message", "data": {"content": panel}})
+                        await __event_emitter__(
+                            {"type": "message", "data": {"content": panel}}
+                        )
                     except Exception:
                         pass
 
@@ -1562,9 +1999,17 @@ class Tools:
                 carousel_url = None
                 try:
                     await _ensure_dir_remote(client, session, exec_dir)
-                    html_target_path = f"{exec_dir}/{nb_ref['name']}.{stamp}.carousel.html"
-                    standalone = build_standalone_page(html, nb_ref["name"], self.valves.THEME)
-                    await client.put_contents(session, html_target_path, {"type": "file", "format": "text", "content": standalone})
+                    html_target_path = (
+                        f"{exec_dir}/{nb_ref['name']}.{stamp}.carousel.html"
+                    )
+                    standalone = build_standalone_page(
+                        html, nb_ref["name"], self.valves.THEME
+                    )
+                    await client.put_contents(
+                        session,
+                        html_target_path,
+                        {"type": "file", "format": "text", "content": standalone},
+                    )
                     base = self.valves.JUPYTER_BASE_URL.rstrip("/")
                     url_path = quote(html_target_path, safe="/")
                     carousel_url = f"{base}/files/{url_path}"
@@ -1573,11 +2018,12 @@ class Tools:
                 except Exception:
                     pass
 
-                n_images = sum(1 for p in pages if p["type"] in ("image", "image_svg"))
-                n_tables = sum(1 for p in pages if p["type"] == "html")
+                flat = list(_flat_outputs(pages))
+                n_images = sum(1 for p in flat if p["type"] in ("image", "image_svg"))
+                n_tables = sum(1 for p in flat if p["type"] == "html")
                 summary = (
                     f"Ran {nb_ref['name']} in {human_duration(duration)} ({len(nb.cells)} cells), "
-                    f"producing {len(pages)} carousel pages ({n_images} plots, {n_tables} tables)."
+                    f"producing {len(pages)} carousel {unit} ({n_images} plots, {n_tables} tables)."
                 )
                 if carousel_url:
                     summary += (
@@ -1598,7 +2044,6 @@ class Tools:
                 return summary
         except aiohttp.ClientError as e:
             return self._conn_error(e)
-
 
 
 async def _ensure_dir_remote(client: "JupyterClient", session, path: str) -> None:
