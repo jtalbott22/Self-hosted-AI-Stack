@@ -178,6 +178,9 @@ services:
     ports: ["3000:8080"]
     volumes:
       - openwebui-data:/app/backend/data
+      # Optional: clone of github.com/cathrynlavery/diagram-design for the
+      # Diagram Design tool (Tools/diagram_design.py). Read-only.
+      - ./diagram-design:/app/backend/data/diagram-design:ro
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       # Set this only if you put Open WebUI behind a reverse proxy.
