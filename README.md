@@ -427,6 +427,41 @@ Open WebUI talks to Kokoro through the OpenAI-compatible TTS API:
 
 Response Splitting controls how message text is chunked before being sent to TTS; Punctuation splits on sentence boundaries rather than sending one long block or splitting by paragraph.
 
+## Diagram Design
+
+`Tools/diagram_design.py` is an Open WebUI tool that adapts the [diagram-design](https://github.com/cathrynlavery/diagram-design) agent skill (MIT, by Cathryn Lavery). The skill draws 45 diagram types, including architecture, flowchart, sequence, state machine, ER, timeline, quadrant, Sankey, and Gantt, as one self-contained HTML + SVG file in a consistent editorial style. Diagrams render inline in the chat.
+
+Open WebUI's own Skills feature takes a single markdown file, and this skill relies on about 60 reference docs and a library of example files, so it is packaged as a tool instead. It gives the model three functions:
+
+| Function | What it does |
+|---|---|
+| `diagram_guide` | The workflow, the list of 45 types with when to use each, the design rules, and the style tokens |
+| `diagram_reference` | The layout rules for one type plus a finished example file to adapt (`light`, `dark`, or `full` variant) |
+| `render_diagram` | Runs the skill's self-check, saves the `.html` file, and renders it inline in the chat |
+
+### Install
+
+1. Clone the skill next to `docker-compose.yaml`. The compose file mounts it read-only into Open WebUI:
+
+   ```bash
+   git clone https://github.com/cathrynlavery/diagram-design
+   docker compose up -d openwebui
+   ```
+
+   This step is optional. Without a clone, the tool fetches the skill files read-only from GitHub at the ref set in its `GITHUB_REF` valve, and it skips the self-check, which only runs from a local clone. Run `git -C diagram-design pull` to update.
+
+2. In Open WebUI, go to **Workspace → Tools → +**, paste the contents of `Tools/diagram_design.py`, and save.
+3. Enable the tool on a model (**Workspace → Models → edit → Tools**) or per chat. Use **Native** function calling for best results.
+4. Ask for a diagram in plain words, for example: *"Draw an architecture diagram of this stack: Open WebUI, llama.cpp, Postgres/pgvector, SearXNG, and Jupyter."*
+
+Saved diagrams go to `/app/backend/data/diagrams` inside the container (the `openwebui-data` volume). To copy them out:
+
+```bash
+docker cp openwebui:/app/backend/data/diagrams ./diagrams
+```
+
+The model writes all of the SVG itself, so output quality depends on the model. The skill's references are long: the guide is about 6k tokens, and a type reference plus its example is another 2–8k, so give the model a context window of at least 32k. If context is tight, lower the `MAX_EXAMPLE_CHARS` valve.
+
 ## Sparkboard
 
 Sparkboard is an optional monitoring component included as a local project under:
