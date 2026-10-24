@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Autonomous AI Factory · Architecture</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&family=Noto+Sans+KR:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper: #0f1420;
+      --color-paper-2: #161d2e;
+      --color-ink: #e8eaed;
+      --color-ink-strong: #111111;
+      --color-muted: #8b92a8;
+      --color-soft: #6b7490;
+      --color-rule: rgba(232,234,237,0.06);
+      --color-rule-solid: rgba(232,234,237,0.15);
+      --color-accent: #e09140;
+      --color-accent-tint: rgba(224,145,64,0.07);
+      --color-link: #5a8fd4;
+      --color-cyan: #3ecfb2;
+      --color-teal: #28a89a;
+      --color-violet: #9b7ed8;
+      --color-violet-tint: rgba(155,126,216,0.06);
+      --color-amber: #e8a838;
+      --color-amber-tint: rgba(232,168,56,0.06);
+      --color-amber-border: rgba(232,168,56,0.50);
+      --font-sans: 'Geist', system-ui, sans-serif;
+      --font-serif: 'Instrument Serif', serif;
+      --font-mono: 'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .frame { max-width: 1600px; width: 100%; }
+    .header { margin-bottom: 1.25rem; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 500;
+      letter-spacing: 0.20em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.4rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.4rem, 2vw + 0.5rem, 1.85rem);
+      font-weight: 400;
+      letter-spacing: -0.01em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 0.35rem;
+    }
+    .subtitle {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      font-weight: 400;
+      color: var(--color-soft);
+      letter-spacing: 0.06em;
+    }
+    svg { width: 100%; min-width: 1100px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <div class="header">
+      <p class="eyebrow">Autonomous AI Infrastructure · Architecture Overview</p>
+      <h1>The Autonomous AI Factory</h1>
+      <p class="subtitle">Inside a self-hosted intelligence system</p>
+    </div>
+
+    <svg viewBox="0 0 1500 860" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="autonomous-ai-title autonomous-ai-desc">
+      <title id="autonomous-ai-title">The Autonomous AI Factory</title>
+      <desc id="autonomous-ai-desc">Architecture diagram of a self-hosted AI ecosystem showing human interface, inference core, specialized capabilities, Docker container network, and trust boundaries.</desc>
+
+      <defs>
+        <!-- Background grid pattern -->
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(232,234,237,0.025)" stroke-width="0.5"/>
+        </pattern>
+
+        <!-- Markers -->
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#8b92a8"/>
+        </marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#e09140"/>
+        </marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#5a8fd4"/>
+        </marker>
+        <marker id="arrow-violet" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#9b7ed8"/>
+        </marker>
+        <marker id="arrow-cyan" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#3ecfb2"/>
+        </marker>
+        <marker id="arrow-amber" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#e8a838"/>
+        </marker>
+
+        <!-- Arrow styles -->
+        <style>
+          .arr-muted { fill: none; stroke: #8b92a8; stroke-width: 1.1; stroke-dasharray: none; marker-end: url(#arrow); }
+          .arr-solid { fill: none; stroke: #8b92a8; stroke-width: 1.2; marker-end: url(#arrow); }
+          .arr-accent { fill: none; stroke: #e09140; stroke-width: 1.4; marker-end: url(#arrow-accent); }
+          .arr-link { fill: none; stroke: #5a8fd4; stroke-width: 1.1; marker-end: url(#arrow-link); }
+          .arr-violet { fill: none; stroke: #9b7ed8; stroke-width: 1.2; marker-end: url(#arrow-violet); }
+          .arr-cyan { fill: none; stroke: #3ecfb2; stroke-width: 1.1; marker-end: url(#arrow-cyan); }
+          .arr-amber { fill: none; stroke: #e8a838; stroke-width: 1.3; marker-end: url(#arrow-amber); }
+          .arr-dashed { fill: none; stroke: #8b92a8; stroke-width: 1; stroke-dasharray: 4,3; marker-end: url(#arrow); }
+          .arr-dashed-link { fill: none; stroke: #5a8fd4; stroke-width: 1; stroke-dasharray: 4,3; marker-end: url(#arrow); }
+        </style>
+      </defs>
+
+      <!-- Background -->
+      <rect width="1500" height="860" fill="#0f1420"/>
+      <rect width="1500" height="860" fill="url(#grid)"/>
+
+      <!-- ============================================================ -->
+      <!-- ZONE 5 — TRUST & CONTROL perimeter (outermost)               -->
+      <!-- ============================================================ -->
+      <rect x="18" y="18" width="1464" height="824" rx="12"
+            fill="none" stroke="rgba(232,234,237,0.07)" stroke-width="0.8" stroke-dasharray="8,6"/>
+      <rect x="24" y="20" width="120" height="12" rx="2" fill="#0f1420"/>
+      <text x="84" y="29" fill="rgba(232,234,237,0.25)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">TRUST BOUNDARY · LOCAL PERIMETER</text>
+
+      <!-- ============================================================ -->
+      <!-- ZONE 1 — HUMAN INTERFACE (top band)                           -->
+      <!-- ============================================================ -->
+      <rect x="380" y="42" width="740" height="68" rx="8"
+            fill="rgba(232,234,237,0.018)" stroke="rgba(232,234,237,0.08)" stroke-width="0.8"/>
+      <rect x="590" y="46" width="60" height="12" rx="2" fill="#0f1420"/>
+      <text x="620" y="55" fill="rgba(232,234,237,0.25)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">HUMAN INTERFACE</text>
+
+      <!-- Open WebUI node (top center) -->
+      <rect x="640" y="66" width="220" height="40" rx="6" fill="#161d2e"/>
+      <rect x="640" y="66" width="220" height="40" rx="6" fill="none" stroke="rgba(232,234,237,0.25)" stroke-width="1"/>
+      <rect x="648" y="72" width="56" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.20)" stroke-width="0.8"/>
+      <text x="676" y="81" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">UI</text>
+      <text x="750" y="89" fill="#e8eaed" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Open WebUI</text>
+      <text x="750" y="103" fill="#8b92a8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">Port 3000 · Orchestration Hub</text>
+
+      <!-- ============================================================ -->
+      <!-- ZONE 2 — INTELLIGENCE CORE (center-left)                      -->
+      <!-- ============================================================ -->
+      <rect x="50" y="130" width="360" height="210" rx="8"
+            fill="rgba(155,126,216,0.025)" stroke="rgba(155,126,216,0.10)" stroke-width="0.8"/>
+      <rect x="210" y="134" width="110" height="12" rx="2" fill="#0f1420"/>
+      <text x="265" y="143" fill="rgba(155,126,216,0.35)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">INTELLIGENCE CORE</text>
+
+      <!-- llama.cpp node -->
+      <rect x="80" y="156" width="140" height="42" rx="6" fill="#161d2e"/>
+      <rect x="80" y="156" width="140" height="42" rx="6" fill="none" stroke="rgba(155,126,216,0.40)" stroke-width="1"/>
+      <rect x="88" y="162" width="36" height="12" rx="2" fill="transparent" stroke="rgba(155,126,216,0.30)" stroke-width="0.8"/>
+      <text x="106" y="171" fill="#9b7ed8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INF</text>
+      <text x="150" y="184" fill="#e8eaed" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">llama.cpp</text>
+      <text x="150" y="198" fill="#8b92a8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">Inference API · Port 8000</text>
+
+      <!-- Qwen GGUF model node (focal) -->
+      <rect x="260" y="156" width="140" height="42" rx="6" fill="#161d2e"/>
+      <rect x="260" y="156" width="140" height="42" rx="6" fill="rgba(155,126,216,0.06)" stroke="#9b7ed8" stroke-width="1.2"/>
+      <rect x="268" y="162" width="44" height="12" rx="2" fill="transparent" stroke="rgba(155,126,216,0.40)" stroke-width="0.8"/>
+      <text x="290" y="171" fill="#9b7ed8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">MODEL</text>
+      <text x="330" y="184" fill="#e8eaed" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Qwen GGUF</text>
+      <text x="330" y="198" fill="#8b92a8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">Local Language Model</text>
+
+      <!-- Tool orchestration hub (below models) -->
+      <rect x="80" y="218" width="320" height="52" rx="6" fill="#161d2e"/>
+      <rect x="80" y="218" width="320" height="52" rx="6" fill="none" stroke="rgba(232,234,237,0.12)" stroke-width="1" stroke-dasharray="4,3"/>
+      <rect x="88" y="224" width="40" height="12" rx="2" fill="transparent" stroke="rgba(232,234,237,0.15)" stroke-width="0.8"/>
+      <text x="108" y="233" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TOOL</text>
+      <text x="240" y="247" fill="#e8eaed" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Tool Orchestration</text>
+      <text x="240" y="263" fill="#8b92a8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">Function calling · Agent loop · Context assembly</text>
+
+      <!-- Arrows: request flow -->
+      <!-- Open WebUI → llama.cpp -->
+      <path d="M 750,106 V 156" fill="none" stroke="#8b92a8" stroke-width="1.2" marker-end="url(#arrow)"/>
+      <rect x="770" y="120" width="56" height="12" rx="2" fill="#0f1420"/>
+      <text x="798" y="129" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">REQUEST</text>
+
+      <!-- llama.cpp → Qwen -->
+      <line x1="220" y1="177" x2="260" y2="177" stroke="#9b7ed8" stroke-width="1.3" marker-end="url(#arrow-violet)"/>
+      <rect x="228" y="161" width="28" height="12" rx="2" fill="#0f1420"/>
+      <text x="242" y="170" fill="#9b7ed8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INF</text>
+
+      <!-- Qwen → Tool orchestration (feedback loop) -->
+      <path d="M 330,198 V 218" fill="none" stroke="#8b92a8" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <rect x="352" y="200" width="40" height="12" rx="2" fill="#0f1420"/>
+      <text x="372" y="209" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">INVOKE</text>
+
+      <!-- Tool orchestration → Qwen (return) -->
+      <path d="M 280,218 V 198" fill="none" stroke="#8b92a8" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <rect x="262" y="200" width="32" height="12" rx="2" fill="#0f1420"/>
+      <text x="278" y="209" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">RESULT</text>
+
+      <!-- Tool orchestration → response (back up to Open WebUI via dashed) -->
+      <path d="M 240,218 V 106" fill="none" stroke="#8b92a8" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+      <!-- ============================================================ -->
+      <!-- ZONE 3 — SPECIALIZED CAPABILITIES (right side)                -->
+      <!-- ============================================================ -->
+      <rect x="430" y="130" width="1040" height="460" rx="8"
+            fill="rgba(232,234,237,0.015)" stroke="rgba(232,234,237,0.07)" stroke-width="0.8"/>
+      <rect x="610" y="134" width="80" height="12" rx="2" fill="#0f1420"/>
+      <text x="650" y="143" fill="rgba(232,234,237,0.22)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">SPECIALIZED CAPABILITIES</text>
+
+      <!-- --- Capability 1: Knowledge Retrieval (top row, left) --- -->
+      <rect x="450" y="156" width="280" height="110" rx="6"
+            fill="none" stroke="rgba(62,207,178,0.15)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <rect x="458" y="160" width="80" height="10" rx="2" fill="#0f1420"/>
+      <text x="498" y="168" fill="rgba(62,207,178,0.35)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">KNOWLEDGE RETRIEVAL</text>
+
+      <!-- Tika -->
+      <rect x="460" y="176" width="70" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="495" y="194" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Tika</text>
+      <text x="495" y="204" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Doc Extract</text>
+
+      <!-- BGE-M3 Embeddings -->
+      <rect x="545" y="176" width="70" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="580" y="194" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">BGE-M3</text>
+      <text x="580" y="204" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Embed</text>
+
+      <!-- PostgreSQL/pgvector -->
+      <rect x="630" y="176" width="90" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="675" y="194" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PostgreSQL</text>
+      <text x="675" y="204" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">pgvector · Store</text>
+
+      <!-- BGE Rerank -->
+      <rect x="460" y="212" width="70" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="495" y="230" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">BGE Rerank</text>
+
+      <!-- Retrieved Context -->
+      <rect x="550" y="212" width="90" height="28" rx="4" fill="rgba(62,207,178,0.04)" stroke="rgba(62,207,178,0.35)" stroke-width="0.8"/>
+      <text x="595" y="230" fill="#3ecfb2" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Retrieved Context</text>
+
+      <!-- Knowledge pipeline arrows -->
+      <line x1="530" y1="190" x2="545" y2="190" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+      <line x1="615" y1="190" x2="630" y2="190" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+      <line x1="495" y1="204" x2="495" y2="212" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+      <line x1="530" y1="226" x2="550" y2="226" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+
+      <!-- Knowledge → LLM context (dashed) -->
+      <path d="M 595,240 V 260 H 440 V 185" fill="none" stroke="#3ecfb2" stroke-width="0.9" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+      <!-- --- Capability 2: Web Intelligence (top row, right) --- -->
+      <rect x="750" y="156" width="280" height="110" rx="6"
+            fill="none" stroke="rgba(62,207,178,0.15)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <rect x="870" y="160" width="70" height="10" rx="2" fill="#0f1420"/>
+      <text x="905" y="168" fill="rgba(62,207,178,0.35)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">WEB INTELLIGENCE</text>
+
+      <!-- SearXNG -->
+      <rect x="760" y="176" width="70" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="795" y="194" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">SearXNG</text>
+      <text x="795" y="204" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Search · P8080</text>
+
+      <!-- Playwright -->
+      <rect x="850" y="176" width="70" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="885" y="194" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Playwright</text>
+      <text x="885" y="204" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Browser</text>
+
+      <!-- Search Results -->
+      <rect x="760" y="212" width="70" height="28" rx="4" fill="rgba(62,207,178,0.04)" stroke="rgba(62,207,178,0.35)" stroke-width="0.8"/>
+      <text x="795" y="230" fill="#3ecfb2" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Search Results</text>
+
+      <!-- Extracted Content -->
+      <rect x="850" y="212" width="90" height="28" rx="4" fill="rgba(62,207,178,0.04)" stroke="rgba(62,207,178,0.35)" stroke-width="0.8"/>
+      <text x="895" y="230" fill="#3ecfb2" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Extracted Content</text>
+
+      <!-- Web pipeline arrows -->
+      <line x1="830" y1="190" x2="850" y2="190" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+      <line x1="795" y1="204" x2="795" y2="212" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+      <line x1="830" y1="226" x2="850" y2="226" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+
+      <!-- External web arrow (dashed, from SearXNG) -->
+      <path d="M 760,190 H 720 V 130 H 700" fill="none" stroke="#5a8fd4" stroke-width="0.9" stroke-dasharray="4,3" marker-end="url(#arrow-link)"/>
+      <rect x="724" y="146" width="40" height="10" rx="2" fill="#0f1420"/>
+      <text x="744" y="154" fill="#5a8fd4" font-size="6.5" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT WEB</text>
+
+      <!-- Web → LLM context (dashed) -->
+      <path d="M 895,240 V 260 H 440 V 195" fill="none" stroke="#3ecfb2" stroke-width="0.9" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+      <!-- --- Capability 3: Computational Workspace (mid row, left) --- -->
+      <rect x="450" y="286" width="280" height="88" rx="6"
+            fill="none" stroke="rgba(62,207,178,0.15)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <rect x="555" y="290" width="90" height="10" rx="2" fill="#0f1420"/>
+      <text x="600" y="298" fill="rgba(62,207,178,0.35)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">COMPUTATIONAL WORKSPACE</text>
+
+      <!-- JupyterLab -->
+      <rect x="460" y="308" width="80" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="500" y="326" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">JupyterLab</text>
+      <text x="500" y="336" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Python · P8888</text>
+
+      <!-- Python Execution -->
+      <rect x="555" y="308" width="80" height="28" rx="4" fill="rgba(62,207,178,0.04)" stroke="rgba(62,207,178,0.35)" stroke-width="0.8"/>
+      <text x="595" y="326" fill="#3ecfb2" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Python Exec</text>
+
+      <!-- Analysis Results -->
+      <rect x="655" y="308" width="70" height="28" rx="4" fill="rgba(62,207,178,0.04)" stroke="rgba(62,207,178,0.35)" stroke-width="0.8"/>
+      <text x="690" y="326" fill="#3ecfb2" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Analysis</text>
+
+      <!-- Arrow Jupyter → Python -->
+      <line x1="540" y1="322" x2="555" y2="322" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+      <!-- Arrow Python → Analysis -->
+      <line x1="635" y1="322" x2="655" y2="322" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+
+      <!-- Analysis → LLM context (dashed) -->
+      <path d="M 690,336 V 350 H 440 V 210" fill="none" stroke="#3ecfb2" stroke-width="0.9" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+      <!-- --- Capability 4: Visual Synthesis (mid row, center) --- -->
+      <rect x="750" y="286" width="280" height="88" rx="6"
+            fill="none" stroke="rgba(62,207,178,0.15)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <rect x="855" y="290" width="80" height="10" rx="2" fill="#0f1420"/>
+      <text x="895" y="298" fill="rgba(62,207,178,0.35)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">VISUAL SYNTHESIS</text>
+
+      <!-- ComfyUI -->
+      <rect x="760" y="308" width="80" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="800" y="326" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ComfyUI</text>
+      <text x="800" y="336" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Image Gen · P8188</text>
+
+      <!-- Generated Image -->
+      <rect x="855" y="308" width="160" height="28" rx="4" fill="rgba(62,207,178,0.04)" stroke="rgba(62,207,178,0.35)" stroke-width="0.8"/>
+      <text x="935" y="326" fill="#3ecfb2" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Generated Image</text>
+
+      <!-- Arrow ComfyUI → Image -->
+      <line x1="840" y1="322" x2="855" y2="322" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+
+      <!-- Open WebUI → ComfyUI (solid, from top zone) -->
+      <path d="M 670,106 V 130 H 720 V 312" fill="none" stroke="#5a8fd4" stroke-width="1" marker-end="url(#arrow-link)"/>
+      <rect x="722" y="212" width="40" height="10" rx="2" fill="#0f1420"/>
+      <text x="742" y="220" fill="#5a8fd4" font-size="6.5" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ORCH</text>
+
+      <!-- --- Capability 5: Voice Synthesis (mid row, right) --- -->
+      <rect x="1050" y="286" width="280" height="88" rx="6"
+            fill="none" stroke="rgba(62,207,178,0.15)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <rect x="1130" y="290" width="65" height="10" rx="2" fill="#0f1420"/>
+      <text x="1162" y="298" fill="rgba(62,207,178,0.35)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">VOICE SYNTHESIS</text>
+
+      <!-- Kokoro TTS -->
+      <rect x="1060" y="308" width="90" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="1105" y="326" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Kokoro TTS</text>
+      <text x="1105" y="336" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">TTS API · P8880</text>
+
+      <!-- Synthesized Speech -->
+      <rect x="1165" y="308" width="150" height="28" rx="4" fill="rgba(62,207,178,0.04)" stroke="rgba(62,207,178,0.35)" stroke-width="0.8"/>
+      <text x="1240" y="326" fill="#3ecfb2" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Synthesized Speech</text>
+
+      <!-- Arrow Kokoro → Speech -->
+      <line x1="1150" y1="322" x2="1165" y2="322" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+
+      <!-- Open WebUI → Kokoro (solid, from top zone) -->
+      <path d="M 830,106 V 130 H 1000 V 312" fill="none" stroke="#5a8fd4" stroke-width="1" marker-end="url(#arrow-link)"/>
+      <rect x="1002" y="212" width="40" height="10" rx="2" fill="#0f1420"/>
+      <text x="1022" y="220" fill="#5a8fd4" font-size="6.5" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">ORCH</text>
+
+      <!-- --- Capability 6: System Observability (bottom left) --- -->
+      <rect x="450" y="394" width="280" height="88" rx="6"
+            fill="none" stroke="rgba(62,207,178,0.15)" stroke-width="0.8" stroke-dasharray="4,3"/>
+      <rect x="545" y="398" width="95" height="10" rx="2" fill="#0f1420"/>
+      <text x="592" y="406" fill="rgba(62,207,178,0.35)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">SYSTEM OBSERVABILITY</text>
+
+      <!-- Sparkboard -->
+      <rect x="460" y="418" width="100" height="28" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.25)" stroke-width="0.8"/>
+      <text x="510" y="436" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sparkboard</text>
+      <text x="510" y="446" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Metrics · P9102</text>
+
+      <!-- Metrics display -->
+      <rect x="575" y="418" width="145" height="28" rx="4" fill="rgba(62,207,178,0.03)" stroke="rgba(62,207,178,0.20)" stroke-width="0.8"/>
+      <text x="647" y="436" fill="#8b92a8" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" text-anchor="middle">CPU · MEM · DISK · GPU · CONTAINERS</text>
+
+      <!-- --- Capability 7: Privileged Operations (bottom right) --- -->
+      <rect x="750" y="394" width="280" height="88" rx="6"
+            fill="rgba(232,168,56,0.02)" stroke="rgba(232,168,56,0.20)" stroke-width="0.8"/>
+      <rect x="870" y="398" width="80" height="10" rx="2" fill="#0f1420"/>
+      <text x="910" y="406" fill="rgba(232,168,56,0.40)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">⚠ PRIVILEGED</text>
+
+      <!-- Open Terminal -->
+      <rect x="760" y="418" width="110" height="28" rx="4" fill="#161d2e" stroke="rgba(232,168,56,0.40)" stroke-width="1"/>
+      <text x="815" y="436" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Open Terminal</text>
+      <text x="815" y="446" fill="#e8a838" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Shell · Filesystem · Auth</text>
+
+      <!-- Auth boundary indicator -->
+      <rect x="890" y="418" width="130" height="28" rx="4" fill="rgba(232,168,56,0.03)" stroke="rgba(232,168,56,0.20)" stroke-width="0.8" stroke-dasharray="3,3"/>
+      <text x="955" y="436" fill="#8b92a8" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" text-anchor="middle">HIGH-TRUST ACCESS</text>
+
+      <!-- Open WebUI → Terminal (amber accent) -->
+      <path d="M 750,106 V 130 H 680 V 422" fill="none" stroke="#e8a838" stroke-width="1.1" marker-end="url(#arrow-amber)"/>
+      <rect x="682" y="272" width="40" height="10" rx="2" fill="#0f1420"/>
+      <text x="702" y="280" fill="#e8a838" font-size="6.5" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">AUTH</text>
+
+      <!-- ============================================================ -->
+      <!-- ZONE 4 — DATA & EXECUTION INFRASTRUCTURE (bottom band)      -->
+      <!-- ============================================================ -->
+      <rect x="50" y="500" width="1390" height="330" rx="8"
+            fill="rgba(232,234,237,0.012)" stroke="rgba(232,234,237,0.08)" stroke-width="0.8"/>
+      <rect x="600" y="504" width="120" height="12" rx="2" fill="#0f1420"/>
+      <text x="660" y="513" fill="rgba(232,234,237,0.22)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">DOCKER COMPOSE · CONTAINER NETWORK</text>
+
+      <!-- Docker Compose label -->
+      <rect x="690" y="518" width="120" height="24" rx="4" fill="#161d2e" stroke="rgba(232,234,237,0.15)" stroke-width="0.8"/>
+      <text x="750" y="534" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Docker Compose</text>
+      <text x="750" y="544" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Service Orchestration</text>
+
+      <!-- ==================== Docker network boundary ==================== -->
+      <rect x="70" y="556" width="1350" height="260" rx="8"
+            fill="none" stroke="rgba(232,234,237,0.06)" stroke-width="0.8" stroke-dasharray="6,4"/>
+      <rect x="520" y="560" width="60" height="10" rx="2" fill="#0f1420"/>
+      <text x="550" y="568" fill="rgba(232,234,237,0.18)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">PRIVATE NETWORK</text>
+
+      <!-- --- Published Host Ports (left side) --- -->
+      <text x="90" y="580" fill="rgba(232,234,237,0.18)" font-size="6.5" font-family="'Geist Mono', monospace" letter-spacing="0.12em">PUBLISHED HOST PORTS</text>
+
+      <!-- Port 3000 - Open WebUI -->
+      <rect x="80" y="590" width="130" height="48" rx="4" fill="#161d2e" stroke="rgba(232,234,237,0.20)" stroke-width="0.8"/>
+      <text x="145" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Open WebUI</text>
+      <text x="145" y="622" fill="#e8a838" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">:3000 → host</text>
+      <text x="145" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">UI · Orchestration</text>
+
+      <!-- Port 8000 - llama.cpp -->
+      <rect x="225" y="590" width="130" height="48" rx="4" fill="#161d2e" stroke="rgba(155,126,216,0.25)" stroke-width="0.8"/>
+      <text x="290" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">llama.cpp</text>
+      <text x="290" y="622" fill="#9b7ed8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">:8000 → host</text>
+      <text x="290" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Inference API</text>
+
+      <!-- Port 8080 - SearXNG -->
+      <rect x="370" y="590" width="130" height="48" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.20)" stroke-width="0.8"/>
+      <text x="435" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">SearXNG</text>
+      <text x="435" y="622" fill="#3ecfb2" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">:8080 → host</text>
+      <text x="435" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Search Engine</text>
+
+      <!-- Port 8188 - ComfyUI -->
+      <rect x="515" y="590" width="130" height="48" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.20)" stroke-width="0.8"/>
+      <text x="580" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">ComfyUI</text>
+      <text x="580" y="622" fill="#3ecfb2" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">:8188 → host</text>
+      <text x="580" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Image Generation</text>
+
+      <!-- Port 8880 - Kokoro -->
+      <rect x="660" y="590" width="130" height="48" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.20)" stroke-width="0.8"/>
+      <text x="725" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Kokoro TTS</text>
+      <text x="725" y="622" fill="#3ecfb2" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">:8880 → host</text>
+      <text x="725" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Text-to-Speech</text>
+
+      <!-- Port 8888 - JupyterLab -->
+      <rect x="805" y="590" width="130" height="48" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.20)" stroke-width="0.8"/>
+      <text x="870" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">JupyterLab</text>
+      <text x="870" y="622" fill="#3ecfb2" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">:8888 → host</text>
+      <text x="870" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Python Workspace</text>
+
+      <!-- Port 9102 - Sparkboard -->
+      <rect x="950" y="590" width="130" height="48" rx="4" fill="#161d2e" stroke="rgba(62,207,178,0.20)" stroke-width="0.8"/>
+      <text x="1015" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Sparkboard</text>
+      <text x="1015" y="622" fill="#3ecfb2" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">:9102 → host</text>
+      <text x="1015" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Observability</text>
+
+      <!-- ==================== Internal-only services (right side) ==================== -->
+      <text x="1120" y="580" fill="rgba(232,234,237,0.18)" font-size="6.5" font-family="'Geist Mono', monospace" letter-spacing="0.12em">INTERNAL SERVICES</text>
+
+      <!-- PostgreSQL -->
+      <rect x="1120" y="590" width="120" height="48" rx="4" fill="rgba(232,234,237,0.02)" stroke="rgba(232,234,237,0.12)" stroke-width="0.8"/>
+      <text x="1180" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PostgreSQL</text>
+      <text x="1180" y="622" fill="#8b92a8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">pgvector · no pub</text>
+      <text x="1180" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Persistent Storage</text>
+
+      <!-- Apache Tika -->
+      <rect x="1120" y="650" width="120" height="42" rx="4" fill="#161d2e" stroke="rgba(232,234,237,0.12)" stroke-width="0.8"/>
+      <text x="1180" y="668" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Apache Tika</text>
+      <text x="1180" y="682" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Doc parsing · no pub</text>
+
+      <!-- Playwright -->
+      <rect x="1255" y="650" width="115" height="42" rx="4" fill="#161d2e" stroke="rgba(232,234,237,0.12)" stroke-width="0.8"/>
+      <text x="1312" y="668" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Playwright</text>
+      <text x="1312" y="682" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Browser · no pub</text>
+
+      <!-- Open Terminal (privileged, internal) -->
+      <rect x="1255" y="590" width="115" height="48" rx="4" fill="rgba(232,168,56,0.03)" stroke="rgba(232,168,56,0.25)" stroke-width="0.8"/>
+      <text x="1312" y="608" fill="#e8eaed" font-size="9" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Open Terminal</text>
+      <text x="1312" y="622" fill="#e8a838" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">Privileged · no pub</text>
+      <text x="1312" y="634" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">Shell access</text>
+
+      <!-- ==================== Persistent data layer (bottom of docker) ==================== -->
+      <rect x="80" y="662" width="1020" height="40" rx="4"
+            fill="rgba(232,234,237,0.015)" stroke="rgba(232,234,237,0.06)" stroke-width="0.8"/>
+      <rect x="440" y="665" width="100" height="10" rx="2" fill="#0f1420"/>
+      <text x="490" y="673" fill="rgba(232,234,237,0.18)" font-size="6.5" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">PERSISTENT VOLUMES · APPLICATION DATA</text>
+
+      <text x="120" y="688" fill="#8b92a8" font-size="8" font-family="'Geist Mono', monospace">pgdata · models · embeddings · notebooks · configs · secrets</text>
+
+      <!-- ==================== External network boundary ==================== -->
+      <text x="80" y="720" fill="rgba(232,234,237,0.15)" font-size="6.5" font-family="'Geist Mono', monospace" letter-spacing="0.12em">EXTERNAL</text>
+
+      <!-- External network area -->
+      <rect x="80" y="730" width="1350" height="70" rx="6"
+            fill="none" stroke="rgba(90,143,212,0.10)" stroke-width="0.8" stroke-dasharray="4,4"/>
+      <text x="735" y="748" fill="rgba(90,143,212,0.30)" font-size="7" font-family="'Geist Mono', monospace"
+            text-anchor="middle" letter-spacing="0.18em">EXTERNAL NETWORK · INTERNET ACCESS (SEARCH / BROWSE ONLY)</text>
+
+      <!-- Arrow: SearXNG to external -->
+      <line x1="435" y1="638" x2="435" y2="730" stroke="#5a8fd4" stroke-width="0.9" stroke-dasharray="4,3" marker-end="url(#arrow-link)"/>
+      <rect x="420" y="678" width="30" height="10" rx="2" fill="#0f1420"/>
+      <text x="435" y="686" fill="#5a8fd4" font-size="6" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">HTTPS</text>
+
+      <!-- Arrow: Playwright to external -->
+      <line x1="1312" y1="692" x2="1312" y2="730" stroke="#5a8fd4" stroke-width="0.9" stroke-dasharray="4,3" marker-end="url(#arrow-link)"/>
+      <rect x="1297" y="706" width="30" height="10" rx="2" fill="#0f1420"/>
+      <text x="1312" y="714" fill="#5a8fd4" font-size="6" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">HTTPS</text>
+
+      <!-- ==================== Docker Compose ↔ Services connections ==================== -->
+      <!-- Docker Compose orchestrates all services (dashed connections) -->
+      <line x1="750" y1="542" x2="145" y2="590" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="290" y2="590" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="435" y2="590" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="580" y2="590" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="725" y2="590" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="870" y2="590" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="1015" y2="590" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="1180" y2="590" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="1180" y2="650" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="1312" y2="650" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+      <line x1="750" y1="542" x2="1312" y2="614" stroke="#8b92a8" stroke-width="0.7" stroke-dasharray="3,3"/>
+
+      <!-- ==================== Inter-service connections ==================== -->
+      <!-- llama.cpp ↔ Open WebUI (internal network) -->
+      <path d="M 290,590 V 556 H 265 V 350 H 150" fill="none" stroke="rgba(155,126,216,0.15)" stroke-width="0.7" stroke-dasharray="3,3"/>
+
+      <!-- PostgreSQL ↔ Knowledge services -->
+      <line x1="1180" y1="590" x2="1180" y2="556" stroke="rgba(232,234,237,0.06)" stroke-width="0.7" stroke-dasharray="3,3"/>
+
+      <!-- ==================== Security annotations ==================== -->
+      <!-- Local inference label -->
+      <rect x="50" y="780" width="100" height="14" rx="3" fill="rgba(155,126,216,0.06)" stroke="rgba(155,126,216,0.20)" stroke-width="0.6"/>
+      <text x="100" y="790" fill="#9b7ed8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">LOCAL INFERENCE</text>
+
+      <!-- Private comms label -->
+      <rect x="170" y="780" width="100" height="14" rx="3" fill="rgba(232,234,237,0.03)" stroke="rgba(232,234,237,0.10)" stroke-width="0.6"/>
+      <text x="220" y="790" fill="#8b92a8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">PRIVATE NET</text>
+
+      <!-- Local data label -->
+      <rect x="280" y="780" width="80" height="14" rx="3" fill="rgba(62,207,178,0.04)" stroke="rgba(62,207,178,0.18)" stroke-width="0.6"/>
+      <text x="320" y="790" fill="#3ecfb2" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">LOCAL DATA</text>
+
+      <!-- Secrets label -->
+      <rect x="370" y="780" width="70" height="14" rx="3" fill="rgba(232,168,56,0.04)" stroke="rgba(232,168,56,0.18)" stroke-width="0.6"/>
+      <text x="405" y="790" fill="#e8a838" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">SECRETS</text>
+
+      <!-- Auth boundary label -->
+      <rect x="450" y="780" width="100" height="14" rx="3" fill="rgba(232,168,56,0.04)" stroke="rgba(232,168,56,0.20)" stroke-width="0.6" stroke-dasharray="3,3"/>
+      <text x="500" y="790" fill="#e8a838" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">AUTH BOUNDARY</text>
+
+      <!-- External access label -->
+      <rect x="560" y="780" width="120" height="14" rx="3" fill="rgba(90,143,212,0.04)" stroke="rgba(90,143,212,0.18)" stroke-width="0.6"/>
+      <text x="620" y="790" fill="#5a8fd4" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">EXT ACCESS (RESTRICTED)</text>
+
+      <!-- Legend strip -->
+      <line x1="50" y1="820" x2="1450" y2="820" stroke="rgba(232,234,237,0.06)" stroke-width="0.5"/>
+
+      <text x="50" y="836" fill="#8b92a8" font-size="7.5" font-family="'Geist Mono', monospace" letter-spacing="0.16em">LEGEND</text>
+
+      <!-- Legend items - row 1 -->
+      <rect x="50" y="844" width="14" height="8" rx="2" fill="rgba(155,126,216,0.06)" stroke="#9b7ed8" stroke-width="0.8"/>
+      <text x="70" y="850" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Model inference</text>
+
+      <rect x="185" y="844" width="14" height="8" rx="2" fill="rgba(62,207,178,0.04)" stroke="#3ecfb2" stroke-width="0.8"/>
+      <text x="205" y="850" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Capability pipeline</text>
+
+      <rect x="360" y="844" width="14" height="8" rx="2" fill="#161d2e" stroke="rgba(232,234,237,0.20)" stroke-width="0.8"/>
+      <text x="380" y="850" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Service node</text>
+
+      <rect x="500" y="844" width="14" height="8" rx="2" fill="rgba(232,168,56,0.03)" stroke="rgba(232,168,56,0.30)" stroke-width="0.8"/>
+      <text x="520" y="850" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Privileged / high-trust</text>
+
+      <rect x="680" y="844" width="14" height="8" rx="2" fill="rgba(90,143,212,0.03)" stroke="rgba(90,143,212,0.20)" stroke-width="0.8"/>
+      <text x="700" y="850" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">External-facing</text>
+
+      <!-- Legend arrows - row 2 -->
+      <line x1="50" y1="862" x2="70" y2="862" stroke="#8b92a8" stroke-width="1.1" marker-end="url(#arrow)"/>
+      <text x="78" y="865" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Solid: execution / request</text>
+
+      <line x1="250" y1="862" x2="270" y2="862" stroke="#8b92a8" stroke-width="0.9" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <text x="278" y="865" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Dashed: context / feedback</text>
+
+      <line x1="460" y1="862" x2="480" y2="862" stroke="#5a8fd4" stroke-width="1.0" marker-end="url(#arrow-link)"/>
+      <text x="488" y="865" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Link: HTTP/API calls</text>
+
+      <line x1="630" y1="862" x2="650" y2="862" stroke="#9b7ed8" stroke-width="1.1" marker-end="url(#arrow-violet)"/>
+      <text x="658" y="865" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Violet: inference flow</text>
+
+      <line x1="810" y1="862" x2="830" y2="862" stroke="#e8a838" stroke-width="1.2" marker-end="url(#arrow-amber)"/>
+      <text x="838" y="865" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Amber: privileged ops</text>
+
+      <line x1="990" y1="862" x2="1010" y2="862" stroke="#3ecfb2" stroke-width="0.9" marker-end="url(#arrow-cyan)"/>
+      <text x="1018" y="865" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Cyan: capability data</text>
+
+      <line x1="1160" y1="862" x2="1180" y2="862" stroke="rgba(232,234,237,0.08)" stroke-width="0.7" stroke-dasharray="6,4"/>
+      <text x="1188" y="865" fill="#8b92a8" font-size="7.5" font-family="'Geist', sans-serif">Perimeter boundary</text>
+    </svg>
+  </div>
+</body>
+</html>
