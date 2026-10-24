@@ -439,6 +439,14 @@ Open WebUI's own Skills feature takes a single markdown file, and this skill rel
 | `diagram_reference` | The layout rules for one type plus a finished example file to adapt (`light`, `dark`, or `full` variant) |
 | `render_diagram` | Runs the skill's self-check, saves the `.html` file, and renders it inline in the chat |
 
+In the chat, each diagram fits the panel width and zooms like an image. It stays vector-sharp at any zoom.
+
+- **Zoom:** pinch, or hold Ctrl/⌘ and scroll. You can also click the diagram and then scroll. Until you click it, scrolling moves the chat as usual.
+- **Pan and reset:** drag to pan. Double-click zooms in, and double-clicking again fits the diagram back. The `+`, `−`, and `0` keys work too.
+- **Toolbar:** the top-right toolbar has zoom controls, full screen, and downloads as **PNG** (2×), **SVG** (fonts embedded), or the original **HTML** file.
+
+Set the `VIEWER` valve to false to show the plain file instead. The saved file is never modified either way.
+
 ### Install
 
 1. Clone the skill next to `docker-compose.yaml`. The compose file mounts it read-only into Open WebUI:
