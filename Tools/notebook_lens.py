@@ -10,7 +10,7 @@ description: >
     like collapsing a heading in Jupyter. Companion to the Lens / Data Lens
     tools; same pattern (LLM infers intent + confirms, Python does the work,
     HTML renders the result without being re-typed by the model).
-version: 0.3.0
+version: 0.4.0
 requirements: nbformat,pydantic,aiohttp,websockets
 """
 
@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Optional, Any
 from urllib.parse import quote
 
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 import nbformat
@@ -1408,16 +1409,23 @@ def build_standalone_page(carousel_html: str, title: str, theme: str = "auto") -
     )
 
 
-def wrap_as_iframe(html: str, height_px: int = 640) -> str:
-    """Sandbox the self-contained carousel in an iframe so its CSS/JS never
-    collides with the host page. Inside the iframe the carousel's 100dvh
-    resolves to the iframe's own height, so the same markup serves both the
-    embedded panel and the full-screen standalone page."""
-    doc = build_standalone_page(html, "Notebook output")
-    srcdoc = doc.replace("&", "&amp;").replace('"', "&quot;")
-    return (
-        f'<iframe srcdoc="{srcdoc}" style="width:100%;height:{height_px}px;'
-        f'border:none;display:block;border-radius:12px;" loading="lazy"></iframe>'
+def build_embed_page(
+    carousel_html: str, title: str, theme: str = "auto", height_px: int = 640
+) -> str:
+    """The standalone page, for Open WebUI's inline tool embed. Open WebUI puts a
+    returned HTMLResponse in a sandboxed iframe that is not same-origin, so it
+    can't measure the page; the page reports its own height with
+    postMessage({type: "iframe:height"}). The carousel fills 100dvh, which inside
+    the iframe is the iframe's own height, so a fixed reported height is stable."""
+    h = max(240, int(height_px))
+    report = (
+        "<script>(function(){function r(){parent.postMessage("
+        f'{{type:"iframe:height",height:{h}}},"*")}}'
+        "r();addEventListener('load',r);setTimeout(r,300);setTimeout(r,1500);})();"
+        "</script>\n"
+    )
+    return build_standalone_page(carousel_html, title, theme).replace(
+        "</body>", report + "</body>", 1
     )
 
 
@@ -1687,6 +1695,14 @@ class Tools:
             default=640,
             description="Height in pixels of the rendered carousel panel.",
         )
+        JUPYTER_PUBLIC_URL: str = Field(
+            default="",
+            description="Jupyter's address as your browser sees it (e.g. "
+            "http://localhost:8888), used for the backup link to the saved "
+            "carousel. JUPYTER_BASE_URL is usually a Docker-internal name like "
+            "http://jupyter:8888 that a browser can't open. Leave empty to skip "
+            "the link; the carousel still renders inline and is still saved.",
+        )
         PLOTLY_CDN_URL: str = Field(
             default="",
             description="Optional plotly.js CDN URL to enable interactive Plotly pages. "
@@ -1811,7 +1827,7 @@ class Tools:
         notebook: str,
         confirmed: bool = False,
         __event_emitter__=None,
-    ) -> str:
+    ):
         """
         Execute a Jupyter notebook top to bottom on a fresh kernel (started on
         your actual Jupyter server, not locally) and display every output
@@ -1976,27 +1992,26 @@ class Tools:
                     meta_line=meta_line,
                     theme=self.valves.THEME,
                 )
-                panel = wrap_as_iframe(html, height_px=self.valves.PANEL_HEIGHT_PX)
+                # Inline delivery: returning an HTMLResponse with Content-Disposition:
+                # inline makes Open WebUI render it as an embedded panel under the tool
+                # call (raw <iframe> markup in message content is not rendered).
+                panel = HTMLResponse(
+                    content=build_embed_page(
+                        html,
+                        nb_ref["name"],
+                        self.valves.THEME,
+                        self.valves.PANEL_HEIGHT_PX,
+                    ),
+                    headers={"Content-Disposition": "inline"},
+                )
+                await emit_status(
+                    f"Ran {nb_ref['name']} in {human_duration(duration)}", done=True
+                )
 
-                # Best-effort inline delivery - whether this actually renders depends on
-                # your chat frontend supporting "message"-type emitter events; many
-                # bridges/pipes only forward "status" events, so this can silently do
-                # nothing. Never rely on it alone (see carousel_url below).
-                if __event_emitter__:
-                    await emit_status(
-                        f"Ran {nb_ref['name']} in {human_duration(duration)}", done=True
-                    )
-                    try:
-                        await __event_emitter__(
-                            {"type": "message", "data": {"content": panel}}
-                        )
-                    except Exception:
-                        pass
-
-                # Guaranteed-to-work fallback: save the carousel as a real .html file on the
-                # Jupyter server and hand back a direct link, since that only depends on the
-                # Contents API (already proven to work) rather than any chat-side rendering.
+                # Backup copy: save the carousel as a real .html file on the Jupyter
+                # server, plus a link when the browser-facing Jupyter URL is known.
                 carousel_url = None
+                saved_path = None
                 try:
                     await _ensure_dir_remote(client, session, exec_dir)
                     html_target_path = (
@@ -2010,11 +2025,13 @@ class Tools:
                         html_target_path,
                         {"type": "file", "format": "text", "content": standalone},
                     )
-                    base = self.valves.JUPYTER_BASE_URL.rstrip("/")
-                    url_path = quote(html_target_path, safe="/")
-                    carousel_url = f"{base}/files/{url_path}"
-                    if self.valves.JUPYTER_TOKEN:
-                        carousel_url += f"?token={self.valves.JUPYTER_TOKEN}"
+                    saved_path = html_target_path
+                    base = self.valves.JUPYTER_PUBLIC_URL.strip().rstrip("/")
+                    if base:
+                        url_path = quote(html_target_path, safe="/")
+                        carousel_url = f"{base}/files/{url_path}"
+                        if self.valves.JUPYTER_TOKEN:
+                            carousel_url += f"?token={self.valves.JUPYTER_TOKEN}"
                 except Exception:
                     pass
 
@@ -2023,17 +2040,17 @@ class Tools:
                 n_tables = sum(1 for p in flat if p["type"] == "html")
                 summary = (
                     f"Ran {nb_ref['name']} in {human_duration(duration)} ({len(nb.cells)} cells), "
-                    f"producing {len(pages)} carousel {unit} ({n_images} plots, {n_tables} tables)."
+                    f"producing {len(pages)} carousel {unit} ({n_images} plots, {n_tables} tables). "
+                    f"The carousel is already displayed inline above this message."
                 )
                 if carousel_url:
                     summary += (
-                        f" Share this link with the user so they can open the carousel directly - "
-                        f"it always works regardless of whether it also rendered inline in this chat: {carousel_url}"
+                        f" A full-screen copy is also saved; give the user this link to open "
+                        f"it in a browser tab: {carousel_url}"
                     )
-                else:
+                elif saved_path:
                     summary += (
-                        " An inline carousel panel was attempted but couldn't also be saved as a "
-                        "fallback link this time - if nothing rendered above, that's why; tell the user."
+                        f" A full-screen copy is also saved on the Jupyter server at {saved_path}."
                     )
                 if not ok:
                     summary += f" Execution stopped early: {err_msg}. Everything up to that point is still shown/saved."
@@ -2041,7 +2058,7 @@ class Tools:
                     " Do not restate specific numbers from the notebook yourself - "
                     "the carousel is the source of truth; just point the user to it."
                 )
-                return summary
+                return panel, summary
         except aiohttp.ClientError as e:
             return self._conn_error(e)
 
