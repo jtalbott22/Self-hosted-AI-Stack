@@ -196,6 +196,32 @@ services:
       - open-terminal:/home/workspace
     restart: unless-stopped
 
+  gitlab-mcp:
+    # MCP server that lets Open WebUI's model work against a GitLab instance
+    # (issues, merge requests, files, branches, pipelines). Open WebUI talks to
+    # it natively over Streamable HTTP at http://gitlab-mcp:3002/mcp.
+    # No GitLab token lives here: with REMOTE_AUTHORIZATION the token is the
+    # Bearer key set on the connection in Open WebUI, sent on each request.
+    # Do not publish this port; anyone who can reach it can use any token.
+    image: zereight050/gitlab-mcp:latest
+    container_name: gitlab-mcp
+    environment:
+      - STREAMABLE_HTTP=true
+      - HOST=0.0.0.0
+      - REMOTE_AUTHORIZATION=true
+      # e.g. https://gitlab.example.com/api/v4
+      - GITLAB_API_URL=${GITLAB_API_URL}
+      # readonly | modify (no delete/cancel/unprotect) | full
+      - GITLAB_PERMISSION_MODE=${GITLAB_PERMISSION_MODE:-modify}
+      # Each toolset adds tools to every request's context; keep this small
+      # for a local model. "core" is ~40 tools covering the common workflow.
+      - GITLAB_TOOLSETS=${GITLAB_TOOLSETS:-core}
+      # Internal CA: mount the PEM and uncomment both lines below.
+      # - NODE_EXTRA_CA_CERTS=/certs/gitlab-ca.pem
+    # volumes:
+    #   - ./certs/gitlab-ca.pem:/certs/gitlab-ca.pem:ro
+    restart: unless-stopped
+
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: openwebui

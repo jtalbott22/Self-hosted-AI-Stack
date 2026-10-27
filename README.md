@@ -20,6 +20,7 @@ The goal of this repository is not to provide a generic cloud AI server. It is a
 | **ComfyUI** | Local image generation |
 | **Kokoro** | Local text-to-speech |
 | **Open Terminal** | Gives Open WebUI a shell and filesystem interface |
+| **GitLab MCP** | Lets the model work with issues, merge requests, repos, and pipelines on your GitLab |
 | **Sparkboard** *(optional)* | Local system, storage, container, and AI activity monitoring |
 | **Avatar** *(optional)* | Talking 3D head in the browser. Built on [LAM](https://github.com/aigc3d/LAM), it uses llama.cpp, Kokoro, Speaches and LAM Audio2Expression for lip-sync |
 
@@ -50,6 +51,7 @@ Everything runs through Docker Compose and communicates over the private Compose
     SearXNG + Playwright  → web search
     Kokoro                → TTS
     Open Terminal         → shell/filesystem
+    GitLab MCP            → GitLab issues, MRs, repos, pipelines
     Sparkboard            → optional local monitoring
 
   Avatar (optional, localhost:8702) → llama.cpp + Kokoro + LAM Audio2Expression
@@ -291,6 +293,68 @@ Auth:     Bearer
 ```
 
 This component is powerful: it provides a shell/filesystem interface and should be treated as a trusted-user capability.
+
+## GitLab (MCP)
+
+Agent stacks usually connect to systems like GitLab through an **MCP server**: a small service that exposes the GitLab API as tools the model can call. Open WebUI (v0.6.31+) can talk to MCP servers natively over Streamable HTTP, so no extra proxy is needed.
+
+The `gitlab-mcp` service runs the community [zereight/gitlab-mcp](https://github.com/zereight/gitlab-mcp) server. It works with self-managed GitLab and gives the model tools for projects, files, branches, commits, issues, merge requests (including diffs and review comments), and pipelines.
+
+### 1. Create a GitLab token
+
+Create a dedicated GitLab user (e.g. `ai-bot`) and add it as **Developer** only on the projects the assistant should touch. Then create a personal access token for it with the `api` scope (use `read_api` for read-only).
+
+All chats that use the connection act as this one GitLab identity, so its project membership is the real permission boundary.
+
+### 2. Point the service at your instance
+
+Add to `.env`:
+
+```bash
+GITLAB_API_URL=https://gitlab.example.com/api/v4
+# Optional:
+# GITLAB_PERMISSION_MODE=modify     # readonly | modify | full
+# GITLAB_TOOLSETS=core              # e.g. core,pipelines,wiki
+```
+
+`modify` (the default here) lets the model create branches, commit files, open issues and merge requests, and comment, but blocks delete, cancel, and unprotect tools. Use `readonly` if you only want questions answered.
+
+If your GitLab uses an internal CA, uncomment the `NODE_EXTRA_CA_CERTS` line and the certificate volume in `docker-compose.yaml`.
+
+```bash
+docker compose up -d gitlab-mcp
+docker compose logs -f gitlab-mcp
+```
+
+### 3. Add the connection in Open WebUI
+
+**Admin Panel → Settings → External Tools** (called **Integrations** in newer versions) → **+**:
+
+| Field | Value |
+|---|---|
+| Type | **MCP (Streamable HTTP)**, not OpenAPI |
+| URL | `http://gitlab-mcp:3002/mcp` |
+| Auth | Bearer |
+| Key | the GitLab token from step 1 |
+
+The token stays in Open WebUI's database, not in `.env`. The server forwards it to GitLab on every request.
+
+### 4. Use it
+
+Enable the GitLab tools on a model (**Workspace → Models → Tools**) or per chat from the **+** menu. Set **Function Calling** to **Native** in the model's advanced parameters; the multi-step tool loop depends on it.
+
+Example prompts:
+
+- "Summarize open merge requests in `group/project` that are waiting on review."
+- "Read `src/config.py` on `main` in `group/project`, fix the timeout default, commit it to a new branch, and open a merge request."
+- "Why did the latest pipeline on `main` fail? Pull the failing job log."
+- "Triage issues labeled `bug` opened this week and comment with a likely cause."
+
+### Notes for local models
+
+Every enabled tool's schema is sent with each request. The `core` toolset is about 40 tools, which a 35B model handles, but adding many toolsets fills context and makes tool selection less reliable. Add toolsets (`pipelines`, `wiki`, `milestones`, …) only as you need them.
+
+The MCP server works through the GitLab API, which suits issues, MRs, reviews, pipelines, and small file edits. For changes that need a real checkout (multi-file refactors, running tests before pushing), have the model use **Open Terminal** with `git` and GitLab's [`glab`](https://gitlab.com/gitlab-org/cli) CLI instead: clone, edit, test, push, then `glab mr create`.
 
 ## Web search
 
@@ -576,7 +640,7 @@ For each container, Sparkboard tracks CPU %, memory (absolute and % of host), an
 | searxng | 8080→8080 |
 | sparkboard | 9102→9102 |
 | avatar | 8702→80 |
-| tika, playwright, postgres, open-terminal | not published |
+| tika, playwright, postgres, open-terminal, gitlab-mcp | not published |
 
 On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, power draw, and SM/memory clocks over time, plus a per-core CPU load breakdown and network/disk throughput history.
 
@@ -596,7 +660,7 @@ On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, po
 | 8702 | Avatar | Avatar web app *(optional)* |
 | 9102 | Sparkboard | Monitoring dashboard |
 
-Playwright, Tika, PostgreSQL, and Open Terminal do not publish host ports.
+Playwright, Tika, PostgreSQL, Open Terminal, and GitLab MCP do not publish host ports.
 
 The LAM Audio2Expression server runs on the host at port 8701, outside Compose. The `avatar` container reaches it through `host.docker.internal`.
 
@@ -605,6 +669,8 @@ The LAM Audio2Expression server runs on the host at port 8701, outside Compose. 
 This is a **single-user / trusted-user stack**, not a hardened multi-tenant platform.
 
 In particular, Open Terminal can provide extremely powerful host/container access. Do not expose it directly to the Internet.
+
+The GitLab MCP connection lets the model write to GitLab as the token's user. Scope that user to specific projects, keep `GITLAB_PERMISSION_MODE` at `modify` or `readonly`, and protect `main` so changes go through merge requests.
 
 Before exposing Open WebUI externally:
 
