@@ -21,7 +21,7 @@ WorkingDirectory=/home/YOUR_USER/LAM
 #Environment=AVATAR_DIRS=/home/YOUR_USER/Self-hosted-AI-Stack/avatar/html/avatars:/mnt/c/nginx/html/avatar/avatars
 ExecStart=/home/YOUR_USER/miniconda3/bin/conda run --no-capture-output -n lam \
     uvicorn avatar_maker:app --app-dir /home/YOUR_USER/Self-hosted-AI-Stack/avatar/scripts \
-    --host 0.0.0.0 --port 8703
+    --host 0.0.0.0 --port 8703 --no-proxy-headers
 Restart=on-failure
 RestartSec=5
 

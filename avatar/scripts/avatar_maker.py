@@ -7,7 +7,11 @@ Run it in the `lam` conda env (it uses that env's Python for the export).
 From the repository root:
 
     conda activate lam
-    uvicorn avatar_maker:app --app-dir avatar/scripts --host 0.0.0.0 --port 8703
+    uvicorn avatar_maker:app --app-dir avatar/scripts --host 0.0.0.0 --port 8703 --no-proxy-headers
+
+--no-proxy-headers matters: without it, uvicorn trusts X-Forwarded-For from a
+proxy on 127.0.0.1, and behind a CDN that header holds the visitor's public
+address, which MAKER_ALLOW then refuses.
 
 Settings (environment variables):
     LAM_DIR       LAM repo with export_avatar.py     default ~/LAM
@@ -214,8 +218,20 @@ async def only_local(request: Request, call_next):
     except (ValueError, AttributeError):
         allowed = False
     if not allowed:
+        await drain(request)
         return JSONResponse({"detail": "Use the avatar page to make avatars."}, status_code=403)
     return await call_next(request)
+
+
+async def drain(request: Request) -> None:
+    """Read (and drop) an upload before answering. Replying while a proxy is
+    still sending the photo makes the connection reset, and nginx then shows
+    the user a bare 502 instead of the real error."""
+    seen = 0
+    async for chunk in request.stream():
+        seen += len(chunk)
+        if seen > 2 * MAX_BYTES:
+            break
 
 
 @app.on_event("startup")
@@ -236,12 +252,16 @@ def health():
 
 @app.post("/jobs", status_code=202)
 async def create(request: Request, name: str, replace: bool = False):
+    # Read the whole upload before any check can fail (see drain()).
+    body = b""
+    async for chunk in request.stream():
+        if len(body) <= MAX_BYTES:
+            body += chunk
     name = name.strip().lower()
     if not NAME_RE.match(name):
         raise HTTPException(400, "Use a name of 1–40 letters, digits, '-' or '_', starting with a letter or digit.")
     if not replace and any((d / f"{name}.zip").exists() for d in AVATAR_DIRS):
         raise HTTPException(409, f"An avatar called '{name}' already exists.")
-    body = await request.body()
     if not body:
         raise HTTPException(400, "Send the photo as the request body.")
     if len(body) > MAX_BYTES:

@@ -6,3 +6,5 @@ html/avatars/*
 !html/avatars/.gitkeep
 # Site settings exported from the page's Setup. Can hold API keys.
 html/avatar-config.json
+# Python bytecode from running the scripts in place
+__pycache__/

@@ -345,7 +345,7 @@ Run it from the repository root:
 
 ```bash
 conda activate lam
-uvicorn avatar_maker:app --app-dir avatar/scripts --host 0.0.0.0 --port 8703
+uvicorn avatar_maker:app --app-dir avatar/scripts --host 0.0.0.0 --port 8703 --no-proxy-headers
 curl -s http://localhost:8703/health    # {"ok":true,"busy":false,"queued":0}
 ```
 
@@ -401,6 +401,7 @@ Errors: `400` for a bad name or an empty body, `409` for a name that's taken or 
 | Replies or tools fail with 401 | llama or the Lens bridge needs its key. See **API keys** under step 4 |
 | "The avatar maker isn't reachable" | Check that `curl http://localhost:8703/health` and `curl http://localhost:8702/make/health` answer. The maker must listen on `0.0.0.0` for the container to reach it |
 | Maker says `Use the avatar page to make avatars.` (403) | You called port 8703 directly from another machine. Go through the page (port 8702), or add your network to `MAKER_ALLOW` |
+| The same 403, or a 502, only through a CDN or reverse proxy (CloudFront, Cloudflare) | Start uvicorn with `--no-proxy-headers`, as the unit does. Without it, uvicorn trusts `X-Forwarded-For` from a proxy on `127.0.0.1`, and behind a CDN that header holds the visitor's public address, which the maker refuses |
 | An avatar made outside the maker is missing `skin.glb` | Blender resolves `--python tools/...` against `$PWD`, not the working directory, and exits 0 when the script is missing. Run `export_avatar.py` from a shell whose `$PWD` is the LAM folder (the maker sets this itself) |
 | Renderer fails to load | Check that `avatar/html/lib/lam-renderer.js` exists and has no `import` lines (`grep -c '^import'` prints 0) |
 
