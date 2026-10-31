@@ -4,3 +4,5 @@ html/lib/*
 # Avatar bundles are personal likenesses and large; keep them out of Git.
 html/avatars/*
 !html/avatars/.gitkeep
+# Site settings exported from the page's Setup. Can hold API keys.
+html/avatar-config.json

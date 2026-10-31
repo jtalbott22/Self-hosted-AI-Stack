@@ -21,7 +21,7 @@ The goal of this repository is not to provide a generic cloud AI server. It is a
 | **Kokoro** | Local text-to-speech |
 | **Open Terminal** | Gives Open WebUI a shell and filesystem interface |
 | **Sparkboard** *(optional)* | Local system, storage, container, and AI activity monitoring |
-| **Avatar** *(optional)* | Talking 3D head in the browser. Built on [LAM](https://github.com/aigc3d/LAM), it uses llama.cpp, Kokoro, and LAM Audio2Expression for lip-sync |
+| **Avatar** *(optional)* | Talking 3D head in the browser. Built on [LAM](https://github.com/aigc3d/LAM), it uses llama.cpp, Kokoro, Speaches and LAM Audio2Expression for lip-sync |
 
 Everything runs through Docker Compose and communicates over the private Compose network unless a port is intentionally published.
 
@@ -508,13 +508,12 @@ The model writes all of the SVG itself, so output quality depends on the model. 
 
 `avatar/` is an optional browser app with a talking 3D head. The head is made from one photo with [LAM (Large Avatar Model)](https://github.com/aigc3d/LAM) from Alibaba's Tongyi Lab. The local LLM writes the reply, Kokoro speaks it, and [LAM_Audio2Expression](https://github.com/aigc3d/LAM_Audio2Expression) turns the audio into lip-sync in real time.
 
-The `avatar` service in `docker-compose.yaml` is an nginx container on port **8702**. It serves `avatar/html/` and proxies llama.cpp, Kokoro, and the Audio2Expression server under one origin, so the page needs no CORS setup. LAM and Audio2Expression themselves run in conda envs on the host, because they compile CUDA extensions against pinned PyTorch and CUDA versions.
+The `avatar` service in `docker-compose.yaml` is an nginx container on port **8702**. It serves `avatar/html/` and proxies llama.cpp, Kokoro, Speaches, the Lens bridge and the Audio2Expression server under one origin, so the page needs no CORS setup. LAM and Audio2Expression themselves run in conda envs on the host, because they compile CUDA extensions against pinned PyTorch and CUDA versions.
 
 Short version, once the conda setup is done:
 
 ```bash
 bash avatar/scripts/setup-web.sh ~/LAM/output/open_avatar_chat/<name>.zip
-cp /path/to/avatar.html avatar/html/
 docker compose up -d avatar
 # then open http://localhost:8702/avatar.html
 ```
@@ -646,7 +645,7 @@ Back up important data before making major image or database-version changes.
     ├── README.md            LAM / Audio2Expression install and hosting guide
     ├── nginx-avatar.conf    nginx config for the avatar container
     ├── html/                avatar.html, lib/ (renderer), avatars/ (bundles)
-    └── scripts/             setup-web.sh, lam-a2e.service
+    └── scripts/             setup-web.sh, lam-a2e.service, export_avatar.py, a2e_server.py
 ```
 
 Model weights, generated data, secrets, databases, and other machine-specific state should not be committed to Git.

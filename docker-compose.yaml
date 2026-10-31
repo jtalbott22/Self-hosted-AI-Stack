@@ -139,8 +139,9 @@ services:
 
   # ----------------------------------------------------------------
   # Avatar is optional. It serves avatar/html (Avatar.html, the LAM web
-  # renderer and exported avatar bundles) and proxies Kokoro, llama.cpp and
-  # the host-side LAM Audio2Expression server under one origin.
+  # renderer and exported avatar bundles) and proxies llama.cpp, Kokoro,
+  # Speaches, the Lens bridge and the host-side LAM Audio2Expression server
+  # under one origin.
   # See avatar/README.md. Remove this service if you don't use it.
   avatar:
     image: nginx:1.27-alpine
@@ -150,7 +151,8 @@ services:
       - ./avatar/html:/usr/share/nginx/html:ro
       - ./avatar/nginx-avatar.conf:/etc/nginx/conf.d/default.conf:ro
     extra_hosts:
-      # Audio2Expression runs in a conda env on the host at :8701.
+      # Audio2Expression runs in a conda env on the host at :8701; Speaches
+      # (:8090) and the Lens bridge (:8095) are reached through host ports.
       - "host.docker.internal:host-gateway"
     depends_on:
       kokoro:

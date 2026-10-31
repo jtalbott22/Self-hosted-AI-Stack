@@ -10,9 +10,11 @@ It is built on **LAM (Large Avatar Model)** and its companion projects from Alib
  Browser: avatar.html  (http://localhost:8702/avatar.html)
    │
    │  same origin, proxied by the `avatar` nginx container
-   ├── /v1/chat/completions ──► llama.cpp       (llama:8000)        reply text
-   ├── /v1/audio/speech ──────► Kokoro          (kokoro:8880)       reply audio
-   └── /a2e ──────────────────► Audio2Expression (host:8701)        audio → facial expression frames
+   ├── llama/v1/chat/completions ──► llama.cpp        (llama:8000)  reply text
+   ├── tts/v1/audio/speech ────────► Kokoro           (kokoro:8880) reply audio
+   ├── a2e/a2e ────────────────────► Audio2Expression (host:8701)   audio → facial expression frames
+   ├── stt/v1/audio/transcriptions ► Speaches         (host:8090)   your voice → text
+   └── lens/tools, lens/call ──────► Lens bridge      (host:8095)   notebook tools for the LLM
    │
    └── lib/lam-renderer.js + avatars/<name>.zip  → renders and animates the head (WebGL)
 
@@ -26,13 +28,13 @@ There are three parts:
 |---|---|---|
 | **LAM** | Host, conda env `lam` | Turns one photo into an animatable Gaussian head and exports a `.zip` bundle. Only needed when you make a new avatar. |
 | **LAM_Audio2Expression (A2E)** | Host, conda env `lam_a2e`, port 8701 | Turns speech audio into the facial expression frames that drive the head. Runs all the time. |
-| **Web app** | `avatar` container, port 8702 | Serves `avatar.html`, the renderer and the bundles, and proxies the other services. |
+| **Web app** | `avatar` container, port 8702 | Serves `avatar.html`, the renderer and the bundles, and proxies llama.cpp, Kokoro, Speaches, the Lens bridge and A2E. |
 
 LAM and A2E compile CUDA extensions against specific versions of PyTorch and CUDA, so they run in conda envs on the host, not in Compose.
 
 ## Requirements
 
-- The main stack running (`llama` and `kokoro` at least).
+- The main stack running (`llama` and `kokoro` at least; `speaches` for voice input and `lens-bridge` for notebook tools).
 - An NVIDIA GPU with CUDA 12.1 support. The steps below were done on WSL2 Ubuntu with an RTX 40-series card (`TORCH_CUDA_ARCH_LIST=8.9`). For a 30-series card use `8.6`. CUDA 12.1 does not support RTX 50-series (Blackwell) cards.
 - About 25 GB of free disk for the two conda envs, the model weights and Blender.
 
@@ -186,15 +188,28 @@ python app_lam.py --blender_path ~/software/blender-4.0.2-linux-x64/blender
 
 Open the URL it prints (Gradio defaults to `http://localhost:7860`), upload the photo, generate, and export. The bundle is written to `~/LAM/output/open_avatar_chat/`.
 
-**Command line:** the `export_avatar.py` helper runs the same steps headless:
+**Command line:** [`scripts/export_avatar.py`](scripts/export_avatar.py) runs the same export as the Gradio app's "Export ZIP file for Chatting Avatar" button, without the UI. It isn't part of upstream LAM, so copy it into the LAM repo root and run it from there:
 
 ```bash
+cp avatar/scripts/export_avatar.py ~/LAM/      # from this repo's root
 cd ~/LAM && conda activate lam
-python export_avatar.py josh.jpg --blender ~/software/blender-4.0.2-linux-x64/blender --name josh
-# -> output/open_avatar_chat/josh.zip
+python export_avatar.py ~/photos/josh.jpg --blender ~/software/blender-4.0.2-linux-x64/blender --name josh
 ```
 
-> `export_avatar.py` is a local helper script and is not in upstream LAM yet. Add it to `avatar/scripts/` in this repo and copy it into `~/LAM` before running.
+| Argument | Meaning |
+|---|---|
+| `photo` | The input photo (any format Pillow reads). |
+| `--blender` | Path to the Blender 4.x executable. Required. |
+| `--name` | Avatar name, used for the ZIP and its top folder. Default: the photo's file name without extension. |
+| `--motion` | Sample motion folder under `assets/sample_motion/export/` that is used for the internal render pass. Default: `GEM`. It doesn't change the exported avatar's animation. |
+
+It checks for the photo, Blender, the motion folder and `assets/sample_oac/` (`template_file.fbx`, `animation.glb`) before loading the model, and exits with the missing path if one isn't there. It writes:
+
+- `output/open_avatar_chat/<name>.zip`, one `<name>/` folder holding `offset.ply`, `skin.glb`, `animation.glb` and `vertex_order.json`. This is the file the page loads.
+- `output/open_avatar_chat/<name>/`, the same files unzipped. It is replaced on every run with the same name.
+- `output/open_avatar_chat/<name>_processed.png`, the cropped, matted face LAM actually used. Check it if the avatar looks wrong.
+
+The script calls LAM's own functions directly, so the `LAM_MOTION` patch to `app_lam.py` above isn't needed for it.
 
 If export fails while compiling `nvdiffrast` (for example, because `CC` wasn't set the first time), clear the cached build and run it again:
 
@@ -221,17 +236,33 @@ tar -xzvf LAM_audio2exp_assets.tar && rm -f LAM_audio2exp_assets.tar
 tar -xzvf LAM_audio2exp_streaming.tar && rm -f LAM_audio2exp_streaming.tar
 ```
 
-Run the HTTP wrapper on port 8701:
+Upstream A2E has no HTTP server, so this repo has a small FastAPI wrapper, [`scripts/a2e_server.py`](scripts/a2e_server.py). Copy it into the A2E repo root and run it from there on port 8701:
 
 ```bash
+cp avatar/scripts/a2e_server.py ~/LAM_Audio2Expression/   # from this repo's root
+cd ~/LAM_Audio2Expression && conda activate lam_a2e
 uvicorn a2e_server:app --host 0.0.0.0 --port 8701
 ```
 
-> `a2e_server.py` is a small FastAPI wrapper around A2E inference, not part of upstream. It takes raw WAV bytes on `POST /a2e` (`Content-Type: application/octet-stream`) and returns the expression frames as JSON. Add it to `avatar/scripts/` in this repo and copy it into `~/LAM_Audio2Expression`.
+It loads the streaming model (`configs/lam_audio2exp_config_streaming.py`; set `A2E_CONFIG` to use another config) and runs one warm-up pass before it accepts requests, so the first real request isn't slow. It needs a CUDA GPU and runs one request at a time on it.
+
+**API**
+
+| Request | Response |
+|---|---|
+| `GET /health` | `{"ok": true, "fps": 30, "styles": 12, "gpu": "<GPU name>"}` |
+| `POST /a2e?style=0` with the audio file as the raw request body | `{"fps": 30, "names": [52 ARKit blendshape names], "frames": [[52 floats], ...], "duration": <seconds>, "infer_ms": <ms>}` |
+
+- The body can be any format librosa can decode: WAV, MP3, OGG or FLAC. It is resampled to 16 kHz mono. The `Content-Type` header is ignored; the page sends Kokoro's MP3 as `application/octet-stream`.
+- `style` (optional, default 0) picks one of the model's speaking styles, `0` to `styles - 1` (0–11 with the released weights).
+- There are 30 frames per second of audio, each with 52 weights from 0 to 1, in the order given by `names`. Frame `i` belongs to time `i / fps`. Weights are pulled toward a closed mouth during silence.
+- Errors: `400` for an empty body or a `style` out of range, `413` for a body over 20 MB, `415` when the audio can't be decoded.
+- CORS is open (`*`), so a page on another origin can call it directly.
 
 Test it with one of the bundled WAV files:
 
 ```bash
+curl -s http://localhost:8701/health
 cd ~/LAM_Audio2Expression
 WAV=$(find assets -name "*.wav" | head -1); echo $WAV
 curl -s -X POST --data-binary @"$WAV" -H "Content-Type: application/octet-stream" \
@@ -249,38 +280,35 @@ From the repository root:
 #    and copies your avatar bundle(s) into avatar/html/avatars/
 bash avatar/scripts/setup-web.sh ~/LAM/output/open_avatar_chat/josh.zip
 
-# 2. The page itself
-cp /path/to/avatar.html avatar/html/avatar.html
-
-# 3. Serve it
+# 2. Serve avatar/html/ (avatar.html is already in the repo)
 docker compose up -d avatar
 ```
 
-Open **http://localhost:8702/avatar.html**.
+Open **http://localhost:8702/avatar.html**, then open Setup and set the avatar to `avatars/josh.zip`.
 
 The `avatar` container serves `avatar/html/` read-only, so new bundles and edits to `avatar.html` show up on reload without a restart.
 
-### Endpoints the page should use
+### Endpoints the page uses
 
-The container proxies the backends under its own origin, so the page needs no CORS settings and no hard-coded ports:
+When the page is served over http or https, its defaults are paths **relative to the page**, and the container proxies each one, stripping the prefix. The page needs no CORS settings and no hard-coded ports, and it works the same from other machines on your LAN or under a sub-path behind a reverse proxy.
 
-| Path in the page | Proxied to |
-|---|---|
-| `/v1/chat/completions` | llama.cpp, `llama:8000` |
-| `/v1/audio/speech` | Kokoro, `kokoro:8880` |
-| `/a2e` | A2E on the host, `:8701` |
-| `lib/lam-renderer.js` | Served file |
-| `avatars/<name>.zip` | Served file |
+| Default in the page | Proxied to | Used for |
+|---|---|---|
+| `llama/v1` + `/chat/completions` | llama.cpp, `llama:8000` | Replies (streamed) |
+| `tts/v1` + `/audio/speech` | Kokoro, `kokoro:8880` | Reply audio |
+| `tts/dev/captioned_speech`, `tts/dev/phonemize` | Kokoro, `kokoro:8880` | Word timings and phonemes for the built-in lip-sync |
+| `a2e/a2e` | A2E on the host, `:8701` | Lip-sync model (lip-sync mode `a2e`, LAM avatars only) |
+| `stt/v1/audio/transcriptions` | Speaches on the host, `:8090` | Voice input |
+| `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
+| `lib/lam-renderer.js` | Served file | LAM renderer (falls back to jsDelivr if missing) |
+| `avatars/<name>.zip` | Served file | Avatar bundles |
+| `avatar-config.json` | Served file, optional | Site-wide settings (below) |
 
-To see which URLs your copy of `avatar.html` calls:
+Opened as a local file, the page calls the ports directly instead (`http://localhost:8000/v1`, `:8880`, `:8701`, `:8090`, `:8095`). Every address can also be changed in Setup. If A2E is down, the page falls back to word-timing lip-sync, so speech still works.
 
-```bash
-grep -nE "audio/speech|/v1|/a2e|localhost:[0-9]+" -i avatar/html/avatar.html
-```
+**API keys.** If llama runs with `LLAMA_API_KEY`, or the Lens bridge with `LENS_BRIDGE_KEY`, requests without the key get `401`. Either enter the keys in Setup (they stay in that browser), or set them on the server with `proxy_set_header Authorization "Bearer ...";` in the `/llama/` or `/lens/` block of `avatar/nginx-avatar.conf`. With the second option, anyone who can reach port 8702 can use them.
 
-Absolute URLs like `http://localhost:8880/v1/audio/speech` still work from a browser on the same machine. Relative paths also work from other machines on your LAN and behind a reverse proxy.
-
-If you set `LLAMA_API_KEY`, the browser has to send it. In that case, either add it in the page or set it in nginx with `proxy_set_header Authorization "Bearer ...";` in the `/v1/` block of `avatar/nginx-avatar.conf`.
+**Site settings.** Setup can export your settings as `avatar-config.json`. Put it in `avatar/html/` and every visitor starts from those settings. It is gitignored, because the export can include the keys.
 
 ### No avatar yet? Use the A2E sample
 
@@ -302,7 +330,7 @@ mkdir -p /mnt/c/nginx/html/avatar
 cp -r avatar/html/* /mnt/c/nginx/html/avatar/
 ```
 
-That gives you `http://localhost/avatar/avatar.html`. Windows nginx doesn't proxy the backends, so the page has to call them by absolute URL (`http://localhost:8880`, `http://localhost:8000`, `http://localhost:8701`). Those services must also accept cross-origin requests.
+Because the page calls its services relatively, Windows nginx has to proxy them under the page's folder: `/avatar/llama/` → `127.0.0.1:8000/`, `/avatar/tts/` → `:8880/`, `/avatar/a2e/` → `:8701/`, `/avatar/stt/` → `:8090/`, `/avatar/lens/` → `:8095/`. Use the location blocks in `avatar/nginx-avatar.conf` as a template. Otherwise, set absolute addresses such as `http://localhost:8880/v1` in Setup; the services must then accept cross-origin requests.
 
 ## Troubleshooting
 
@@ -318,7 +346,8 @@ That gives you `http://localhost/avatar/avatar.html`. Windows nginx doesn't prox
 | Export: `base_vid` / `NoneType` error | Apply the `LAM_MOTION` patch to `app_lam.py` |
 | Blender: `libXi.so.6` (or similar) not found | Install the X libraries from step 1 |
 | `nvdiffrast_plugin` build error | `rm -rf ~/.cache/torch_extensions/*/nvdiffrast_plugin` and retry with `CC=gcc-12` set |
-| Page loads but the head never moves | Check that `curl http://localhost:8701/a2e` answers and `docker logs avatar` shows no 502s on `/a2e`. On native Linux, A2E must listen on `0.0.0.0`, not `127.0.0.1`, for the container to reach it |
+| Page loads but the head never moves, or "Lip-sync model unreachable" | Check that `curl http://localhost:8701/health` and `curl http://localhost:8702/a2e/health` both answer, and that `docker logs avatar` shows no 502s on `/a2e/`. On native Linux, A2E must listen on `0.0.0.0`, not `127.0.0.1`, for the container to reach it |
+| Replies or tools fail with 401 | llama or the Lens bridge needs its key. See **API keys** under step 4 |
 | Renderer fails to load | Check that `avatar/html/lib/lam-renderer.js` exists and has no `import` lines (`grep -c '^import'` prints 0) |
 
 ## Credits

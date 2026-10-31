@@ -1,0 +1,2184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avatar — local voice mode</title>
+<style>
+  :root{
+    --ink:#0e1218; --ink-2:#141a23; --panel:#19212c; --line:#2b3543;
+    --text:#e2e7ee; --dim:#78838f;
+    --tally:#ff3f34; --amber:#f2a93b; --live:#7fd6c4;
+    --font: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:radial-gradient(120% 90% at 50% 8%, #1b2430 0%, var(--ink) 62%), var(--ink);
+    color:var(--text); font-family:var(--font); overflow:hidden; -webkit-font-smoothing:antialiased;
+  }
+  #backdrop{position:fixed;inset:-6%;pointer-events:none;will-change:transform;
+    background:
+      radial-gradient(60% 45% at 50% 30%, rgba(127,214,196,.07), transparent 70%),
+      radial-gradient(120% 90% at 50% 8%, #1b2430 0%, var(--ink) 62%)}
+  /* ---- layout ----
+     The avatar owns a "stage" rectangle. With the Lens closed that's the whole
+     window. With it open, the Lens takes a column on the right (wide screens)
+     or a sheet along the bottom (phones), and the stage shrinks to what's left,
+     so the face is re-framed into the space you can actually see instead of
+     sitting behind the panel. Captions, the type box, the controls and the
+     call bar all centre on the stage, not the window.
+       --stageR  space taken on the right   --stageB  space taken at the bottom */
+  :root{ --stageR:0px; --stageB:0px; --lensW:min(46vw,760px); --ease:cubic-bezier(.2,.8,.2,1) }
+  #stage{position:fixed;top:0;left:0;right:var(--stageR);bottom:var(--stageB);overflow:hidden;
+    transition:right .34s var(--ease),bottom .3s var(--ease)}
+  #lamStage{position:absolute;inset:0;display:none}
+  #lamStage canvas{width:100%!important;height:100%!important;display:block}
+  #stage canvas{display:block}
+
+  /* Captions: a short transcript that grows upward and scrolls once it's
+     taller than the box. It sticks to the newest line while text streams in,
+     unless you've scrolled up to reread something. (The old version used
+     justify-content:flex-end with overflow:hidden, which silently cut off the
+     start of anything longer than about two lines and couldn't be scrolled.) */
+  /* A glass card, centred on the stage, so captions stay readable over any
+     outfit or background (white text straight over a white shirt wasn't). */
+  #caption{
+    position:fixed; z-index:2; left:calc((100vw - var(--stageR)) / 2); transform:translateX(-50%);
+    bottom:calc(max(var(--stageB), var(--barH)) + 12px);
+    width:max-content; max-width:min(720px, calc(100vw - var(--stageR) - 32px));
+    padding:10px 18px; border-radius:16px;
+    background:rgba(12,16,22,.6); border:1px solid rgba(255,255,255,.07);
+    backdrop-filter:blur(14px) saturate(1.15); -webkit-backdrop-filter:blur(14px) saturate(1.15);
+    text-align:center; font-size:18px; line-height:1.45;
+    text-shadow:0 1px 8px rgba(0,0,0,.4);
+    max-height:min(34dvh, 10em); overflow-y:auto; overflow-x:hidden;
+    overscroll-behavior:contain; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+    display:flex; flex-direction:column;
+    pointer-events:none;
+    transition:left .34s var(--ease), bottom .3s var(--ease), max-width .34s var(--ease);
+  }
+  #caption.empty{display:none}
+  #caption::-webkit-scrollbar{display:none}
+  #caption.scrolls{pointer-events:auto}              /* only grab touches when there's something to scroll */
+  #caption.clipped{                                  /* fade the top edge when earlier lines are scrolled away */
+    -webkit-mask-image:linear-gradient(to bottom, transparent 0, #000 1.6em);
+            mask-image:linear-gradient(to bottom, transparent 0, #000 1.6em)}
+  #caption > :first-child{margin-top:auto}           /* bottom-aligned, but still scrollable */
+  #caption .you{color:var(--dim); font-size:15px; display:-webkit-box; -webkit-box-orient:vertical;
+    -webkit-line-clamp:2; overflow:hidden; margin-bottom:4px; flex:0 0 auto}
+  #caption .reply{white-space:pre-line; overflow-wrap:anywhere; flex:0 0 auto}
+  #caption .interim{color:var(--dim); font-style:italic; flex:0 0 auto}
+
+  /* ---- mute: replies show as captions only, no voice ---- */
+  #topLeft{position:fixed;z-index:3;top:calc(env(safe-area-inset-top,0px) + 14px);left:14px;
+    display:flex;align-items:center;gap:8px}
+  #muteBtn{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;cursor:pointer;padding:0;
+    background:rgba(20,26,35,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.06);color:var(--dim);-webkit-tap-highlight-color:transparent}
+  #muteBtn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+  #muteBtn .off{display:none}
+  #muteBtn.muted{background:#e2e7ee;border-color:#e2e7ee;color:#10141b}
+  #muteBtn.muted .on{display:none} #muteBtn.muted .off{display:inline}
+  #muteBtn:focus-visible{outline:2px solid var(--live);outline-offset:3px}
+
+  :root{ --barH: calc(98px + env(safe-area-inset-bottom,0px)); --lensH: 52dvh; }
+
+  /* ---- status pill, top-left ---- */
+  #status{display:flex;align-items:center;gap:8px;padding:7px 12px 7px 10px;border-radius:999px;
+    background:rgba(20,26,35,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.06)}
+  #status span{font-size:13px;color:var(--dim)}
+  .lamp{width:10px;height:10px;border-radius:50%;background:var(--dim)}
+  .lamp.listening{background:var(--tally);box-shadow:0 0 14px 2px rgba(255,63,52,.55)}
+  .lamp.transcribing,.lamp.thinking,.lamp.working{background:var(--amber);box-shadow:0 0 14px 2px rgba(242,169,59,.45);animation:pulse .9s ease-in-out infinite}
+  .lamp.speaking{background:var(--live);box-shadow:0 0 14px 2px rgba(127,214,196,.5)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @media (prefers-reduced-motion:reduce){.lamp{animation:none!important}}
+
+  /* ---- control bar: five buttons, mic dead centre ---- */
+  #bar{position:fixed;z-index:4;left:0;right:var(--stageR);bottom:0;transition:right .34s var(--ease);
+    padding:12px 10px calc(10px + env(safe-area-inset-bottom,0px));
+    background:linear-gradient(to top, rgba(10,13,18,.96) 35%, rgba(10,13,18,0))}
+  #bar .ctlrow{max-width:440px;margin:0 auto;display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr)) auto repeat(2,minmax(0,1fr));
+    align-items:end;justify-items:center}
+  .ctl{background:none;border:0;padding:0;color:var(--text);font:inherit;cursor:pointer;
+    display:flex;flex-direction:column;align-items:center;gap:6px;-webkit-tap-highlight-color:transparent}
+  .ctl .disc{width:50px;height:50px;border-radius:50%;display:grid;place-items:center;
+    background:rgba(25,33,44,.82);border:1px solid var(--line);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    transition:background .18s,border-color .18s,transform .1s}
+  .ctl svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .ctl .lbl{font-size:11.5px;color:var(--dim);line-height:1}
+  .ctl:active .disc{transform:scale(.95)}
+  .ctl:focus-visible{outline:none}
+  .ctl:focus-visible .disc{outline:2px solid var(--live);outline-offset:3px}
+  .ctl.active .disc{background:#e2e7ee;border-color:#e2e7ee;color:#10141b}
+  .ctl.active .lbl{color:var(--text)}
+  .ctl.badge .disc{position:relative}
+  .ctl.badge .disc::after{content:"";position:absolute;top:3px;right:3px;width:10px;height:10px;border-radius:50%;
+    background:var(--live);box-shadow:0 0 0 2px var(--ink)}
+  #talk{margin:0 6px; --lvl:0}
+  #talk .disc{width:68px;height:68px;background:var(--panel);
+    box-shadow:0 0 0 calc(var(--lvl) * 14px) rgba(255,63,52,.22)}
+  #talk svg{width:27px;height:27px;fill:currentColor;stroke:none}
+  #talk.hot .disc{border-color:var(--tally);background:#2a1719}
+
+  /* ---- Lens: tool results as a floating sheet ---- */
+  #lens{position:fixed;z-index:3;left:8px;right:8px;bottom:var(--barH);height:var(--lensH);
+    display:flex;flex-direction:column;overflow:hidden;border-radius:20px;
+    background:rgba(13,17,24,.88);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);
+    border:1px solid rgba(255,255,255,.08);box-shadow:0 18px 50px rgba(0,0,0,.55);
+    transform:translateY(calc(100% + var(--barH) + 24px));visibility:hidden;
+    transition:transform .34s cubic-bezier(.2,.8,.2,1),height .3s cubic-bezier(.2,.8,.2,1),visibility 0s .34s}
+  #lens.open{transform:none;visibility:visible;transition:transform .34s cubic-bezier(.2,.8,.2,1),height .3s cubic-bezier(.2,.8,.2,1)}
+  #lens.dragging{transition:none}
+  #lens .grab{flex:0 0 22px;display:grid;place-items:center;touch-action:none;cursor:ns-resize}
+  #lens .grab span{width:38px;height:5px;border-radius:3px;background:rgba(255,255,255,.22)}
+  #lens header{display:flex;align-items:center;gap:8px;padding:0 10px 8px 12px}
+  #lensTabs{flex:1;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+  #lensTabs::-webkit-scrollbar{display:none}
+  .ltab{white-space:nowrap;border:1px solid var(--line);background:transparent;color:var(--dim);
+    border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+  .ltab.on{color:var(--text);border-color:#3c6763;background:rgba(127,214,196,.1)}
+  .licon{flex:0 0 34px;height:34px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--dim);
+    display:grid;place-items:center;cursor:pointer}
+  .licon svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+  .licon:hover{color:var(--text)}
+  #lensSize .shrink{display:none} body.lens-full #lensSize .shrink{display:block} body.lens-full #lensSize .grow{display:none}
+  #lens .body{flex:1;position:relative;margin:0 8px 8px;border-radius:14px;overflow:hidden;background:#0b0f14}
+  #lensFrame{border:0;width:100%;height:100%;display:block;background:#0b0f14}
+  #lensEmpty{position:absolute;inset:0;display:grid;place-items:center;padding:28px;text-align:center;
+    color:var(--dim);font-size:14px;line-height:1.55}
+  /* ---- theater: videos from tool panels play here, outside the sandbox ---- */
+  #theater{position:fixed;inset:0;z-index:7;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+    padding:calc(env(safe-area-inset-top,0px) + 16px) 12px calc(var(--barH) + 12px);
+    background:rgba(6,8,11,.8);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  #theater.on{display:flex}
+  #theater .frame{width:min(100%, calc((100dvh - var(--barH) - 130px) * 16 / 9), 1280px);aspect-ratio:16/9;
+    border-radius:14px;overflow:hidden;background:#000;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+  #theater iframe{width:100%;height:100%;border:0;display:block}
+  #theater .tbar{width:min(100%, calc((100dvh - var(--barH) - 130px) * 16 / 9), 1280px);display:flex;align-items:center;gap:12px}
+  #theaterTitle{flex:1;min-width:0;color:var(--dim);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #theaterClose{border:1px solid var(--line);background:rgba(25,33,44,.85);color:var(--text);border-radius:999px;
+    padding:8px 16px;font:inherit;font-size:14px;cursor:pointer}
+  /* Phones: the Lens is a sheet above the controls; the stage is what's above the sheet. */
+  body.lens-open{ --stageB:calc(var(--barH) + var(--lensH)) }
+  body.lens-open #caption{font-size:15.5px;max-height:min(14dvh, 3.9em);padding:6px 14px}
+  body.lens-open #caption .you{display:none}
+  body.lens-full #caption{display:none}            /* full-height sheet: no room left for the face or captions */
+  body.lens-drag #stage, body.lens-drag #caption, body.lens-drag #typed{transition:none}
+
+  /* Wide screens: a true split. The Lens is a full-height column on the right;
+     the avatar, captions, type box and controls share the column on the left.
+     Expanding the Lens widens it and leaves the avatar a narrow portrait strip. */
+  @media (min-width:900px){
+    :root{ --lensW:clamp(420px, 48vw, 860px) }
+    body.lens-full{ --lensW:max(420px, calc(100vw - 380px)) }
+    body.lens-open{ --stageB:0px; --stageR:calc(var(--lensW) + 28px) }
+    #lens{left:auto;right:14px;top:calc(env(safe-area-inset-top,0px) + 14px);bottom:calc(env(safe-area-inset-bottom,0px) + 14px);
+      height:auto;width:var(--lensW);transform:translateX(calc(100% + 40px));
+      transition:transform .34s var(--ease),width .34s var(--ease),visibility 0s .34s}
+    #lens.open{transition:transform .34s var(--ease),width .34s var(--ease)}
+    #lens .grab{display:none}
+    #lens header{padding-top:10px}
+    body.lens-open #caption{font-size:17px;max-height:min(34dvh, 10em);padding:10px 18px}
+    body.lens-open #caption .you{display:-webkit-box}
+    body.lens-full #caption{display:flex}
+    body.lens-open #selfTile{right:calc(var(--stageR) + 2px)}
+  }
+
+  #typed{position:fixed;z-index:4;left:calc((100vw - var(--stageR)) / 2);transform:translateX(-50%);
+    bottom:calc(max(var(--stageB), var(--barH)) + 6px);
+    width:min(560px,calc(100vw - var(--stageR) - 32px));display:none;
+    transition:left .34s var(--ease), bottom .3s var(--ease), width .34s var(--ease)}
+  #typed input{width:100%;background:rgba(20,26,35,.94);border:1px solid var(--line);
+    color:var(--text);border-radius:12px;padding:11px 14px;font:inherit;font-size:15px}
+  #typed input:focus{outline:none;border-color:var(--live)}
+  body.typing #caption{bottom:calc(max(var(--stageB), var(--barH)) + 62px)}
+
+  #meters{position:fixed;z-index:3;left:14px;top:calc(env(safe-area-inset-top,0px) + 58px);display:none;
+    background:rgba(20,26,35,.82);border:1px solid var(--line);border-radius:10px;padding:10px}
+  #meters.on{display:block}
+
+  #settings{position:fixed;z-index:10;top:0;right:0;bottom:0;width:min(400px,100vw);
+    background:var(--ink-2);border-left:1px solid var(--line);
+    padding:22px 22px calc(22px + env(safe-area-inset-bottom,0px));
+    overflow-y:auto;transform:translateX(100%);transition:transform .22s ease}
+  #settings.open{transform:none}
+  #settings h2{margin:0 0 4px;font-size:17px;font-weight:600}
+  #settings h3{margin:24px 0 2px;font-size:14px;font-weight:600}
+  #settings p.note{margin:0 0 6px;color:var(--dim);font-size:13px;line-height:1.5}
+  label{display:block;margin:12px 0 5px;font-size:13px;color:var(--dim)}
+  input[type=text],input[type=password],textarea,select{
+    width:100%;background:var(--panel);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:9px 11px;font:inherit;font-size:14px}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--live)}
+  textarea{resize:vertical;min-height:76px;line-height:1.45}
+  .row{display:flex;gap:10px;margin-top:22px}
+  .row button{flex:1;padding:10px;border-radius:8px;border:1px solid var(--line);
+    background:var(--panel);color:var(--text);font:inherit;font-size:14px;cursor:pointer}
+  .row button.primary{background:#20303a;border-color:#31545a}
+  label.check{display:flex;gap:9px;align-items:flex-start;color:var(--text);font-size:13.5px;line-height:1.45;margin:14px 0 4px;cursor:pointer}
+  label.check input{margin-top:2px;accent-color:var(--live)}
+  #settings code{font-size:12px;background:var(--panel);padding:1px 5px;border-radius:4px}
+  p.note.warn{color:#e8b84b;display:none}
+  body.keys-on #exportKeysNote{display:block}
+  .row button:hover{border-color:#3d4a5c}
+
+  /* ---- FaceTime-style self view ---- */
+  #selfTile{position:fixed;z-index:3;width:min(30vw,138px);aspect-ratio:3/4;
+    top:calc(env(safe-area-inset-top,0px) + 14px);right:14px;
+    border-radius:16px;overflow:hidden;background:#05070a;display:none;
+    box-shadow:0 8px 28px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.12);
+    touch-action:none;cursor:grab;transition:top .28s cubic-bezier(.2,.8,.2,1),left .28s cubic-bezier(.2,.8,.2,1),right .28s,bottom .28s}
+  #selfTile.on{display:block}
+  #selfTile.dragging{transition:none;cursor:grabbing}
+  #selfTile video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);display:block}
+  #callBar{position:fixed;z-index:2;top:calc(env(safe-area-inset-top,0px) + 14px);left:calc((100vw - var(--stageR)) / 2);transform:translateX(-50%);
+    transition:left .34s var(--ease);
+    display:none;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;
+    background:rgba(20,26,35,.62);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    font-size:14px;color:var(--text)}
+  #callBar.on{display:flex}
+  #callBar .t{color:var(--dim);font-variant-numeric:tabular-nums}
+  #err{position:fixed;top:14px;left:calc((100vw - var(--stageR)) / 2);transform:translateX(-50%);
+    background:#2a1719;border:1px solid #5a2b2b;color:#ffb9b3;
+    padding:10px 14px;border-radius:9px;font-size:13.5px;max-width:min(620px,calc(100vw - var(--stageR) - 32px));
+    display:none;line-height:1.5;z-index:5}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+
+<div id="backdrop"></div>
+<div id="stage"></div>
+<div id="err" role="alert"></div>
+<canvas id="meters" width="300" height="150" aria-hidden="true"></canvas>
+<div id="callBar" aria-hidden="true"><span id="callName"></span><span class="t" id="callTime">0:00</span></div>
+<div id="selfTile" aria-label="Your camera"><video id="selfVideo" playsinline muted autoplay></video></div>
+<div id="caption" aria-live="polite"></div>
+<div id="typed"><input id="typedInput" type="text" placeholder="Type a message and press Enter" autocomplete="off"></div>
+
+<div id="topLeft">
+  <div id="status"><div class="lamp" id="lamp"></div><span id="stateLabel">Idle</span></div>
+  <button id="muteBtn" type="button" aria-pressed="false" aria-label="Mute voice" title="Mute voice (M)">
+    <svg class="on" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+    <svg class="off" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+  </button>
+</div>
+
+<section id="lens" aria-label="Lens" aria-hidden="true">
+  <div class="grab" id="lensGrab"><span></span></div>
+  <header>
+    <div id="lensTabs" role="tablist"></div>
+    <button class="licon" id="lensSize" aria-label="Expand" title="Expand"><svg class="grow" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg><svg class="shrink" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg></button>
+    <button class="licon" id="lensClose" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </header>
+  <div class="body">
+    <iframe id="lensFrame" title="Lens result" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads allow-forms"></iframe>
+    <div id="lensEmpty">Ask to see a notebook, a chart, or a web page, and it opens here.</div>
+  </div>
+</section>
+
+<div id="theater" aria-hidden="true" role="dialog" aria-label="Video">
+  <div class="frame"><iframe id="theaterFrame" title="Video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>
+  <div class="tbar"><span id="theaterTitle"></span><button id="theaterClose">Close video</button></div>
+</div>
+
+<div id="bar"><div class="ctlrow">
+  <button class="ctl" id="typeBtn" aria-label="Type a message">
+    <span class="disc"><svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7.5 14h9"/></svg></span><span class="lbl">Type</span>
+  </button>
+  <button class="ctl" id="camBtn" aria-pressed="false" aria-label="Camera">
+    <span class="disc"><svg viewBox="0 0 24 24"><rect x="2.5" y="6.5" width="13" height="11" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5"/></svg></span><span class="lbl">Camera</span>
+  </button>
+  <button class="ctl" id="talk" aria-label="Start talking">
+    <span class="disc"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12z"/></svg></span><span class="lbl">Talk</span>
+  </button>
+  <button class="ctl" id="lensBtn" aria-label="Lens panel">
+    <span class="disc"><svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg></span><span class="lbl">Lens</span>
+  </button>
+  <button class="ctl" id="cfgBtn" aria-label="Setup">
+    <span class="disc"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span><span class="lbl">Setup</span>
+  </button>
+</div></div>
+
+<aside id="settings" aria-label="Setup">
+  <h2>Setup</h2>
+  <p class="note">Addresses default to this page’s own host, so serving the page from your nginx needs no changes here.</p>
+
+  <h3>Model</h3>
+  <label for="llmBase">Model API</label>
+  <input type="text" id="llmBase">
+  <label for="llmModel">Model name</label>
+  <input type="text" id="llmModel">
+  <label for="thinking">Model thinking before it answers</label>
+  <select id="thinking">
+    <option value="off">Off — starts talking sooner</option>
+    <option value="on">On — slower, sometimes better on hard questions</option>
+  </select>
+  <label for="llmKey">API key</label>
+  <input type="password" id="llmKey" autocomplete="off">
+
+  <h3>Voice</h3>
+  <label for="ttsBase">Kokoro API</label>
+  <input type="text" id="ttsBase">
+  <label for="ttsVoice">Voice</label>
+  <input type="text" id="ttsVoice">
+  <label for="ttsSpeed">Speed</label>
+  <input type="text" id="ttsSpeed">
+  <label for="lipMode">Lip sync</label>
+  <select id="lipMode">
+    <option value="a2e">Lip-sync model on your server (best for a LAM face)</option>
+    <option value="timeline">Word timings from Kokoro</option>
+    <option value="audio">Audio analysis only</option>
+  </select>
+  <label for="a2eUrl">Lip-sync model address</label>
+  <input type="text" id="a2eUrl">
+
+  <h3>Listening</h3>
+  <label for="sttMode">Speech input</label>
+  <select id="sttMode">
+    <option value="server">Record and transcribe on your server</option>
+    <option value="browser">Browser speech recognition</option>
+  </select>
+  <label for="sttUrl">Transcription address</label>
+  <input type="text" id="sttUrl">
+  <label for="sttModel">Transcription model</label>
+  <input type="text" id="sttModel">
+  <label for="sttKey">Transcription key (leave blank unless your server needs one)</label>
+  <input type="password" id="sttKey" autocomplete="off">
+  <label for="endSilence">Pause before it replies (seconds)</label>
+  <input type="text" id="endSilence" inputmode="decimal">
+  <p class="note">How long you can stop mid-thought before your turn ends. Raise it if you get cut off. Tapping the microphone ends your turn right away, and holding the space bar lets you talk for as long as you hold it.</p>
+  <label for="followUp">Listen again after it replies</label>
+  <select id="followUp">
+    <option value="question">When it asks you a question</option>
+    <option value="always">Always (hands-free conversation)</option>
+    <option value="off">Never</option>
+  </select>
+
+  <h3>Tools</h3>
+  <p class="note">Your Open WebUI tools, run through the Lens bridge. Results open in the Lens panel.</p>
+  <label for="lensOn">Tools</label>
+  <select id="lensOn"><option value="on">On</option><option value="off">Off</option></select>
+  <label for="lensUrl">Tools server address</label>
+  <input type="text" id="lensUrl">
+  <label for="lensKey">Tools server key</label>
+  <input type="password" id="lensKey" autocomplete="off">
+  <p class="note" id="lensStatus"></p>
+
+  <h3>Face</h3>
+  <label for="avatarUrl">Avatar — a .glb, or a LAM .zip (blank uses the built-in head)</label>
+  <input type="text" id="avatarUrl" placeholder="/avatar/avatar.glb">
+  <label for="faceSize">Face size for a LAM face (1 fills the space above the captions)</label>
+  <input type="text" id="faceSize" inputmode="decimal">
+  <label for="faceRaise">Face height for a LAM face (0 = centred; positive raises it, negative lowers it — try ±0.1)</label>
+  <input type="text" id="faceRaise" inputmode="decimal">
+  <label for="mouthGain">Mouth movement for a LAM face (1 = as generated; 0.7 is subtler, 1.3 livelier)</label>
+  <input type="text" id="mouthGain" inputmode="decimal">
+  <label for="jawMax">Widest jaw opening for a LAM face (0–1; lower hides the missing teeth — try 0.25–0.45)</label>
+  <input type="text" id="jawMax" inputmode="decimal">
+  <label for="meterMode">Viseme meters</label>
+  <select id="meterMode"><option value="off">Hidden</option><option value="on">Shown</option></select>
+  <label for="callNameInput">Name shown during a camera call</label>
+  <input type="text" id="callNameInput">
+  <label for="tiltMode">3D tilt</label>
+  <select id="tiltMode">
+    <option value="on">Follow the phone’s motion (or the mouse)</option>
+    <option value="off">Off</option>
+  </select>
+  <label for="sysPrompt">System prompt</label>
+  <textarea id="sysPrompt"></textarea>
+
+  <div class="row">
+    <button id="testVoice">Test voice</button>
+    <button id="saveCfg" class="primary">Save</button>
+  </div>
+  <div class="row"><button id="closeCfg">Close</button></div>
+
+  <h3>Settings for visitors</h3>
+  <p class="note">Save your setup as <code>avatar-config.json</code> and put it next to this page on your server. Every visitor then starts with these settings. Anything a visitor changes in Setup stays in their own browser.</p>
+  <label class="check"><input type="checkbox" id="exportKeys"> Include the API keys in the file</label>
+  <p class="note warn" id="exportKeysNote">Anyone who opens the page can read keys in that file and use your model and tools directly. Leave this off and have nginx add the keys instead.</p>
+  <label class="check"><input type="checkbox" id="exportHide"> Hide the Setup button for visitors (open it yourself by adding <code>?setup</code> to the address)</label>
+  <div class="row">
+    <button id="exportCfg">Export avatar-config.json</button>
+    <button id="resetCfg">Reset to site settings</button>
+  </div>
+  <p class="note" id="siteCfgStatus"></p>
+</aside>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* ================================================================== *
+ * Config — when the page is served over http(s), the services default to
+ * paths relative to the page (llama/, tts/, a2e/, stt/, lens/), which the
+ * server in front of it proxies: the stack's `avatar` container on :8702, or
+ * an nginx like avatar-app.conf. Opened as a file, it calls the ports directly.
+ * ================================================================== */
+const proxied = /^https?:$/.test(location.protocol);
+const DEFAULTS = {
+  llmBase : proxied ? new URL('llama/v1', location.href).href : 'http://localhost:8000/v1',
+  llmModel: 'qwen',
+  thinking: 'off',
+  llmKey  : '',
+  ttsBase : proxied ? new URL('tts/v1', location.href).href : 'http://localhost:8880/v1',
+  ttsVoice: 'af_heart',
+  ttsSpeed: '1.0',
+  lipMode : 'a2e',
+  a2eUrl  : proxied ? new URL('a2e/a2e', location.href).href : 'http://localhost:8701/a2e',
+  sttMode : 'server',
+  sttUrl  : proxied ? new URL('stt/v1/audio/transcriptions', location.href).href : 'http://localhost:8090/v1/audio/transcriptions',
+  sttModel: 'Systran/faster-whisper-small.en',
+  sttKey  : '',
+  endSilence: '1.4',
+  followUp: 'question',
+  avatarUrl: '',
+  faceSize: '1.0',
+  faceRaise: '0',
+  mouthGain: '1.0',
+  jawMax: '0.35',
+  meterMode: 'off',
+  tiltMode: 'on',
+  lensOn: 'on',
+  lensUrl: proxied ? new URL('lens', location.href).href : 'http://localhost:8095',
+  lensKey: '',
+  callNameInput: 'Avatar',
+  sysPrompt: 'You are a local voice assistant. Your replies are spoken aloud, so keep them short and conversational — usually one to three sentences. No markdown, no lists, no code blocks, no emoji. If something needs length, offer the short version first.'
+};
+/* Settings come in three layers, later ones winning:
+     1. DEFAULTS above
+     2. avatar-config.json next to this page — the site owner's settings, for every visitor
+     3. what this visitor saved in Setup, kept in their own browser
+   A visitor's browser only stores what they changed from the site settings,
+   so a later update to avatar-config.json still reaches them. */
+const SITE_CFG_URL = new URL('avatar-config.json', location.href).href;
+const SITE = await fetch(SITE_CFG_URL, { cache:'no-store' })
+  .then(r => r.ok ? r.json() : null).catch(() => null) || {};
+const siteHide = SITE.hideSetup === true;
+delete SITE.hideSetup;
+const BASE = { ...DEFAULTS };
+for (const k in SITE) if (k in DEFAULTS && SITE[k] != null) BASE[k] = String(SITE[k]);
+let CFG = { ...BASE };
+try {
+  const mine = JSON.parse(localStorage.getItem('avatarCfg') || '{}');
+  for (const k in mine) if (k in DEFAULTS) CFG[k] = mine[k];
+} catch {}
+
+const $ = id => document.getElementById(id);
+const fillForm = () => { for (const k in DEFAULTS) if ($(k)) $(k).value = CFG[k]; };
+fillForm();
+
+function saveLocal(){
+  const diff = {};
+  for (const k in DEFAULTS) if (CFG[k] !== BASE[k]) diff[k] = CFG[k];
+  try {
+    if (Object.keys(diff).length) localStorage.setItem('avatarCfg', JSON.stringify(diff));
+    else localStorage.removeItem('avatarCfg');
+  } catch {}
+}
+function applyCfg(){
+  $('meters').classList.toggle('on', CFG.meterMode === 'on');
+  face.load(CFG.avatarUrl);
+  face.frameLam();
+  tools.load(true);
+}
+$('saveCfg').onclick = () => {
+  for (const k in DEFAULTS) if ($(k)) CFG[k] = $(k).value.trim() || BASE[k];
+  saveLocal(); applyCfg();
+  $('settings').classList.remove('open');
+};
+$('resetCfg').onclick = () => {
+  CFG = { ...BASE }; saveLocal(); fillForm(); applyCfg();
+  $('siteCfgStatus').textContent = 'Back to the site settings.';
+};
+
+/* Export what's in the form now (saved or not) as the site file. */
+const KEY_FIELDS = ['llmKey', 'sttKey', 'lensKey'];
+$('exportKeys').onchange = e => document.body.classList.toggle('keys-on', e.target.checked);
+$('exportHide').checked = siteHide;
+$('exportCfg').onclick = () => {
+  const out = {};
+  for (const k in DEFAULTS){
+    const v = $(k) ? $(k).value.trim() : CFG[k];
+    if (KEY_FIELDS.includes(k) && !$('exportKeys').checked) continue;
+    out[k] = v;
+  }
+  if ($('exportHide').checked) out.hideSetup = true;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2) + '\n'], { type:'application/json' }));
+  a.download = 'avatar-config.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  $('siteCfgStatus').textContent = 'Saved avatar-config.json. Put it in the same folder as this page on your server.';
+};
+$('siteCfgStatus').textContent = Object.keys(SITE).length
+  ? 'This page is using the site settings from avatar-config.json.'
+  : 'No avatar-config.json found next to this page yet, so visitors get the built-in defaults.';
+
+// Visitors can be kept out of Setup; ?setup in the address brings it back.
+if (siteHide && !new URLSearchParams(location.search).has('setup')){
+  const b = $('cfgBtn'); b.style.visibility = 'hidden'; b.tabIndex = -1; b.setAttribute('aria-hidden', 'true');
+}
+$('cfgBtn').onclick   = () => $('settings').classList.toggle('open');
+$('closeCfg').onclick = () => $('settings').classList.remove('open');
+$('meters').classList.toggle('on', CFG.meterMode === 'on');
+
+function showError(msg){
+  const e = $('err'); e.textContent = msg; e.style.display = 'block';
+  clearTimeout(showError._t); showError._t = setTimeout(() => e.style.display = 'none', 10000);
+}
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const authHeader = key => key ? { Authorization: 'Bearer ' + key } : {};
+
+/* ================================================================== *
+ * Visemes — the Oculus set Ready Player Me heads ship with
+ * ================================================================== */
+const LAM_LIB_LOCAL = new URL('lib/lam-renderer.js', location.href).href;
+const LAM_LIB = 'https://cdn.jsdelivr.net/npm/gaussian-splat-renderer-for-lam@0.0.9-alpha.2/build/gaussian-splat-renderer-for-lam.module.js';
+/* The clip now playing with model lip sync: { frames, fps, map, ctx, t0, src }. */
+let a2eNow = null;
+const VISEMES = ['sil','PP','FF','TH','DD','kk','CH','SS','nn','RR','aa','E','I','O','U'];
+const VOWELS  = new Set(['aa','E','I','O','U','RR']);
+const JAW = { sil:0, PP:0, FF:.05, TH:.16, DD:.22, kk:.28, CH:.14, SS:.07, nn:.18, RR:.24,
+              aa:.78, E:.46, I:.26, O:.56, U:.24 };
+
+/* Misaki (Kokoro's phonemizer) IPA → visemes. Uppercase letters are its diphthongs. */
+const IPA = {
+  p:'PP', b:'PP', m:'PP',  f:'FF', v:'FF',  'θ':'TH', 'ð':'TH',
+  t:'DD', d:'DD', 'ɾ':'DD',  k:'kk', g:'kk', 'ɡ':'kk', 'ŋ':'kk',
+  'ʃ':'CH', 'ʒ':'CH', 'ʧ':'CH', 'ʤ':'CH',  s:'SS', z:'SS',
+  n:'nn', l:'nn',  'ɹ':'RR', r:'RR', 'ɚ':'RR', 'ɝ':'RR',
+  'ɑ':'aa', 'æ':'aa', a:'aa', 'ʌ':'aa', 'ɐ':'aa',
+  'ɛ':'E', e:'E', 'ə':'E', 'ᵊ':'E', 'ɜ':'E',
+  i:'I', 'ɪ':'I', j:'I',  o:'O', 'ɔ':'O',  u:'U', 'ʊ':'U', w:'U',
+  A:['E','I'], I:['aa','I'], O:['O','U'], W:['aa','U'], Y:['O','I'], Q:['O','U']
+};
+function ipaToVisemes(s){
+  const out = [];
+  for (const ch of s){
+    const v = IPA[ch];
+    if (!v) continue;
+    if (Array.isArray(v)) out.push(...v); else out.push(v);
+  }
+  return out;
+}
+
+/* Fallback when phonemes can't be lined up with words: rough spelling rules. */
+const DI = { th:'TH', sh:'CH', ch:'CH', ph:'FF', ck:'kk', ng:'kk', qu:'kk', wh:'U', oo:'U', ee:'I',
+             ea:'I', ou:'aa', ow:'O', ai:'E', ay:'E', oa:'O', oi:'O', au:'O', aw:'O',
+             er:'RR', ir:'RR', ur:'RR', or:'O', ar:'aa' };
+const ONE = { a:'aa', e:'E', i:'I', o:'O', u:'U', y:'I', b:'PP', p:'PP', m:'PP', f:'FF', v:'FF',
+              t:'DD', d:'DD', n:'nn', l:'nn', k:'kk', c:'kk', g:'kk', q:'kk', x:'kk',
+              s:'SS', z:'SS', j:'CH', r:'RR', w:'U' };
+function lettersToVisemes(word){
+  let w = word.toLowerCase().replace(/[^a-z]/g, '');
+  if (!w) return [];
+  if (w.length > 3 && w.endsWith('e') && !/[aeiou]e$/.test(w)) w = w.slice(0, -1);
+  const out = []; let i = 0;
+  while (i < w.length){
+    const two = w.substr(i, 2);
+    if (DI[two]){ out.push(DI[two]); i += 2; continue; }
+    if (ONE[w[i]]) out.push(ONE[w[i]]);
+    i++;
+  }
+  return out;
+}
+
+/* Words with start/end times → a list of viseme segments. Vowels get more time than consonants. */
+function buildTimeline(words, phonWords){
+  const segs = [];
+  words.forEach((w, idx) => {
+    let vs = phonWords ? ipaToVisemes(phonWords[idx]) : lettersToVisemes(w.word);
+    if (!vs.length) vs = ['aa'];
+    const span = Math.max(0.04, w.end - w.start);
+    const wts = vs.map(v => v === 'PP' ? 1.15 : VOWELS.has(v) ? 1.8 : 1);
+    const tot = wts.reduce((a, b) => a + b, 0);
+    let t = w.start;
+    vs.forEach((v, k) => {
+      const d = span * wts[k] / tot;
+      const last = segs[segs.length - 1];
+      if (last && last.v === v && Math.abs(last.t1 - t) < 0.01) last.t1 = t + d;
+      else segs.push({ v, t0: t, t1: t + d });
+      t += d;
+    });
+  });
+  return segs;
+}
+
+/* ================================================================== *
+ * Lip sync
+ *
+ * Two sources, same output:
+ *  - timeline: Kokoro word timings + phonemes → exact viseme sequence,
+ *              including the lip closures (P/B/M) audio can't detect
+ *  - audio:    band analysis of the playing audio, used whenever the
+ *              timeline isn't available
+ * Both are scaled by a loudness envelope that's normalised against a
+ * running peak, so the mouth closes in the dips between syllables
+ * instead of hanging open for the whole sentence.
+ * ================================================================== */
+
+/* ================================================================== *
+ * iOS audio session
+ *  - Web Audio follows the ring/silent switch unless a media element is
+ *    playing, so a silent looping <audio> keeps the session in "playback".
+ *  - After the mic is used, iOS can leave output muted or on the earpiece;
+ *    the audioSession API (iOS 17+) switches it back explicitly.
+ * ================================================================== */
+function setSession(type){ try { if (navigator.audioSession) navigator.audioSession.type = type; } catch {} }
+const keepAlive = (() => {
+  let el = null;
+  function silentWav(){
+    const n = 4000, b = new ArrayBuffer(44 + n), v = new DataView(b);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0,'RIFF'); v.setUint32(4, 36 + n, true); w(8,'WAVE'); w(12,'fmt ');
+    v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+    v.setUint32(24,8000,true); v.setUint32(28,8000,true); v.setUint16(32,1,true); v.setUint16(34,8,true);
+    w(36,'data'); v.setUint32(40, n, true);
+    for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+    return URL.createObjectURL(new Blob([b], { type:'audio/wav' }));
+  }
+  return {
+    start(){
+      if (!el){ el = new Audio(silentWav()); el.loop = true; el.setAttribute('playsinline', ''); }
+      if (el.paused) el.play().catch(() => {});
+    }
+  };
+})();
+
+class LipSync {
+  constructor(){
+    this.ctx = null; this.analyser = null;
+    this.cur = {}; this.target = {};
+    for (const v of [...VISEMES, 'jaw']) { this.cur[v] = 0; this.target[v] = 0; }
+    this.clipStart = null; this.timeline = null; this.seg = 0;
+    this.peakDb = -30; this.rel = 0; this.source = 'idle';
+  }
+
+  ensure(){
+    if (this.ctx) return this.ctx;
+    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 1024;
+    this.analyser.smoothingTimeConstant = 0.12;
+    this.analyser.connect(this.ctx.destination);
+    this.freq = new Uint8Array(this.analyser.frequencyBinCount);
+    this.wave = new Float32Array(this.analyser.fftSize);
+    return this.ctx;
+  }
+
+  /* Called by the player with the AudioContext time the clip starts at. */
+  start(at, timeline){ this.clipStart = at; this.timeline = timeline; this.seg = 0; }
+  detach(){ this.clipStart = null; this.timeline = null; }
+
+  /* iOS only lets audio start inside a tap. Playing one silent sample during
+     the tap unlocks the AudioContext for everything played later. */
+  unlock(){
+    if (state !== 'listening') setSession('playback');
+    keepAlive.start();
+    const ctx = this.ensure();
+    if (ctx.state !== 'running') ctx.resume();
+    try {
+      const b = ctx.createBuffer(1, 1, 22050), src = ctx.createBufferSource();
+      src.buffer = b; src.connect(ctx.destination); src.start(0);
+    } catch {}
+  }
+
+  band(lo, hi){
+    const binHz = this.ctx.sampleRate / this.analyser.fftSize;
+    let sum = 0, n = 0;
+    const a = Math.floor(lo / binHz), b = Math.min(Math.floor(hi / binHz), this.freq.length - 1);
+    for (let i = a; i <= b; i++){ sum += this.freq[i]; n++; }
+    return n ? sum / n / 255 : 0;
+  }
+
+  /* Loudness relative to the recent peak: 0 in the gaps, 1 on stressed syllables. */
+  envelope(dt){
+    this.analyser.getFloatTimeDomainData(this.wave);
+    let s = 0; for (const x of this.wave) s += x * x;
+    const db = 10 * Math.log10(s / this.wave.length + 1e-10);
+    this.peakDb = Math.max(db, this.peakDb - dt * 5);
+    if (db < -58) return 0;
+    const rel = clamp((db - (this.peakDb - 22)) / 22);
+    return Math.pow(rel, 1.5);
+  }
+
+  fromTimeline(t){
+    const segs = this.timeline;
+    while (this.seg < segs.length - 1 && segs[this.seg].t1 < t) this.seg++;
+    const s = segs[this.seg];
+    if (!s || t < s.t0 - 0.02 || t > s.t1 + 0.04) return false;   // between words
+    const p = clamp((t - s.t0) / Math.max(0.001, s.t1 - s.t0));
+    const next = segs[this.seg + 1];
+    // coarticulation: start moving toward the next shape before this one ends
+    const blend = next && next.t0 - s.t1 < 0.03 ? clamp((p - 0.6) / 0.4) * 0.55 : 0;
+    this.target[s.v] += 1 - blend;
+    if (blend) this.target[next.v] += blend;
+    return true;
+  }
+
+  fromAudio(rel){
+    this.analyser.getByteFrequencyData(this.freq);
+    const b1 = this.band(200, 800), b2 = this.band(800, 2200),
+          b3 = this.band(2200, 4200), b4 = this.band(4200, 9000);
+    const tot = b1 + b2 + b3 + b4 + 1e-6;
+    const sib = b4 / tot, front = (b3 + b2 * 0.4) / tot, open = clamp((b1 / tot) * 2);
+    if (sib > 0.3){ this.target.SS = 1; return; }
+    const round = clamp(1 - front * 2.4);
+    this.target.aa = open * (1 - round);
+    this.target.O  = open * round;
+    this.target.U  = (1 - open) * round;
+    this.target.E  = (1 - round) * (1 - open) * 0.8;
+    this.target.I  = front * (1 - open) * 0.6;
+  }
+
+  step(dt){
+    for (const k in this.target) this.target[k] = 0;
+    let rel = 0;
+    if (this.analyser && this.clipStart !== null && speaking){
+      rel = this.envelope(dt);
+      const t = this.ctx.currentTime - this.clipStart + 0.035;          // a hair of anticipation, like real speech
+      let hit = false;
+      if (this.timeline){ hit = this.fromTimeline(t); this.source = 'timeline'; }
+      else if (rel > 0.06){ this.fromAudio(rel); hit = true; this.source = 'audio'; }
+
+      if (hit){
+        // loudness scales everything except the closures, which must stay fully shut
+        const gain = this.timeline ? 0.55 + 0.6 * rel : 0.2 + 0.95 * rel;
+        let sum = 0;
+        for (const v of VISEMES){
+          if (v !== 'PP') this.target[v] = clamp(this.target[v] * gain);
+          sum += this.target[v];
+        }
+        this.target.sil = clamp(1 - sum);
+      } else this.target.sil = 1;
+    } else { this.target.sil = 1; this.source = 'idle'; }
+
+    let jaw = 0; for (const v of VISEMES) jaw += this.target[v] * JAW[v];
+    this.target.jaw = clamp(jaw);
+
+    // crisp attack, slightly softer release; closures snap shut fastest
+    for (const k in this.cur){
+      const up = k === 'PP' ? 42 : 30, down = 20;
+      const rate = this.target[k] > this.cur[k] ? up : down;
+      this.cur[k] += (this.target[k] - this.cur[k]) * Math.min(1, dt * rate);
+    }
+    this.rel += (rel - this.rel) * Math.min(1, dt * 10);
+    return this.cur;
+  }
+}
+
+
+/* Morph names vary by exporter: "jawOpen", "JawOpen", "blendShape1.jawOpen", "mouthSmile_L"…
+   Reduce them all to one comparable form. */
+function normMorph(n){
+  let k = String(n).split(/[.:|]/).pop();
+  k = k.replace(/^(blendshape\d*_?|bs_|arkit_)/i, '');
+  k = k.replace(/_l$/i, 'Left').replace(/_r$/i, 'Right');
+  return k.replace(/[_\s-]/g, '').toLowerCase();
+}
+
+/* Viseme → ARKit recipe, for heads that ship only the 52 ARKit shapes. */
+const LR = (name, v) => ({ [name + 'Left']: v, [name + 'Right']: v });
+const ARKIT = {
+  sil:{},
+  PP:{ ...LR('mouthPress', .55), mouthRollLower:.3, mouthRollUpper:.25, mouthClose:.2 },
+  FF:{ mouthRollLower:.55, ...LR('mouthUpperUp', .2), jawOpen:.05 },
+  TH:{ jawOpen:.12, tongueOut:.35, ...LR('mouthStretch', .1) },
+  DD:{ jawOpen:.2, ...LR('mouthStretch', .15) },
+  kk:{ jawOpen:.26, ...LR('mouthStretch', .18) },
+  CH:{ mouthFunnel:.5, jawOpen:.12, mouthShrugUpper:.2 },
+  SS:{ ...LR('mouthStretch', .35), ...LR('mouthSmile', .1), jawOpen:.05 },
+  nn:{ jawOpen:.15, ...LR('mouthStretch', .1) },
+  RR:{ mouthFunnel:.35, mouthPucker:.25, jawOpen:.15 },
+  aa:{ jawOpen:.7, ...LR('mouthStretch', .1), ...LR('mouthLowerDown', .25) },
+  E: { jawOpen:.35, ...LR('mouthStretch', .4), ...LR('mouthSmile', .15) },
+  I: { jawOpen:.18, ...LR('mouthStretch', .5), ...LR('mouthSmile', .25) },
+  O: { jawOpen:.45, mouthFunnel:.7 },
+  U: { jawOpen:.14, mouthPucker:.85, mouthFunnel:.3 }
+};
+const ARKIT_USED = [...new Set(Object.values(ARKIT).flatMap(o => Object.keys(o)).concat('jawOpen'))];
+
+/* The full ARKit 52 — LAM's renderer wants every key present on every frame. */
+const ARKIT_52 = ['browDownLeft','browDownRight','browInnerUp','browOuterUpLeft','browOuterUpRight','mouthCheekPuff',
+  'cheekSquintLeft','cheekSquintRight','eyeBlinkLeft','eyeBlinkRight','eyeLookDownLeft','eyeLookDownRight','eyeLookInLeft',
+  'eyeLookInRight','eyeLookOutLeft','eyeLookOutRight','eyeLookUpLeft','eyeLookUpRight','eyeSquintLeft','eyeSquintRight',
+  'eyeWideLeft','eyeWideRight','jawForward','jawLeft','jawOpen','jawRight','mouthClose','mouthDimpleLeft','mouthDimpleRight',
+  'mouthFrownLeft','mouthFrownRight','mouthFunnel','mouthLeft','mouthLowerDownLeft','mouthLowerDownRight','mouthPressLeft',
+  'mouthPressRight','mouthPucker','mouthRight','mouthRollLower','mouthRollUpper','mouthShrugLower','mouthShrugUpper',
+  'mouthSmileLeft','mouthSmileRight','mouthStretchLeft','mouthStretchRight','mouthUpperUpLeft','mouthUpperUpRight',
+  'noseSneerLeft','noseSneerRight','tongueOut'];
+
+/* Visemes + blink + emphasis → ARKit weights. Used by ARKit GLB heads and LAM. */
+function arkitFrom(w, blink, rel){
+  const out = {};
+  for (const v of VISEMES){
+    const k = w[v] || 0; if (k <= 0) continue;
+    for (const [name, amt] of Object.entries(ARKIT[v])) out[name] = (out[name] || 0) + amt * k;
+  }
+  out.jawOpen = Math.max(out.jawOpen || 0, (w.jaw || 0) * 0.85);
+  out.eyeBlinkLeft = out.eyeBlinkRight = blink;
+  out.browInnerUp = rel * 0.25;
+  for (const k in out) out[k] = clamp(out[k]);
+  return out;
+}
+
+/* ================================================================== *
+ * Face
+ * ================================================================== */
+/* Per-viseme mouth shape for the built-in head:
+   w = width, o = opening, r = rounding, t = teeth showing, press = lips pressed */
+const SHAPE = {
+  sil:{w:1.00,o:0.00,r:0.0,t:0.0}, PP:{w:0.96,o:0.00,r:0.0,t:0.0,press:1},
+  FF:{w:1.00,o:0.10,r:0.0,t:1.0},  TH:{w:1.00,o:0.20,r:0.0,t:0.8},
+  DD:{w:1.03,o:0.28,r:0.0,t:0.7},  kk:{w:1.00,o:0.36,r:0.0,t:0.4},
+  CH:{w:0.80,o:0.20,r:0.6,t:0.9},  SS:{w:1.12,o:0.10,r:0.0,t:1.0},
+  nn:{w:1.03,o:0.24,r:0.0,t:0.6},  RR:{w:0.80,o:0.26,r:0.6,t:0.3},
+  aa:{w:1.06,o:1.00,r:0.0,t:0.5},  E:{w:1.16,o:0.55,r:0.0,t:0.7},
+  I:{w:1.24,o:0.30,r:0.0,t:0.9},   O:{w:0.74,o:0.72,r:0.9,t:0.2},
+  U:{w:0.58,o:0.30,r:1.0,t:0.0}
+};
+
+class Face {
+  constructor(el){
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(26, 1, 0.02, 50);
+    this.renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    el.appendChild(this.renderer.domElement);
+
+    this.scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1a2230, 2.0));
+    const key = new THREE.DirectionalLight(0xfff2e0, 2.1); key.position.set(1.2, 1.6, 2.4);
+    const rim = new THREE.DirectionalLight(0x8fd6ff, 1.0); rim.position.set(-2.2, 1.0, -1.6);
+    this.scene.add(key, rim);
+
+    this.root = new THREE.Group(); this.scene.add(this.root);
+    this.meshes = []; this.morph = new Map(); this.rig = null; this.headBone = null; this.ph = null;
+    this.blink = 0; this.nextBlink = 2 + Math.random() * 3;
+    this.clock = new THREE.Clock();
+    this.meterCtx = $('meters').getContext('2d');
+
+    // Size to the stage, not the window: the stage shrinks when the Lens opens.
+    this.el = el;
+    new ResizeObserver(() => this.resize()).observe(el);
+    addEventListener('resize', () => this.resize());
+    this.resize();
+    this.lamExpr = {};
+    this.renderer.setAnimationLoop(() => this.tick());
+  }
+
+  resize(){
+    const w = Math.max(1, this.el.clientWidth || innerWidth), h = Math.max(1, this.el.clientHeight || innerHeight);
+    if (w === this._w && h === this._h) return;
+    this._w = w; this._h = h;
+    this.renderer.setSize(w, h);
+    this.camera.aspect = w / h;
+    // Vertical FOV that keeps the head's width in frame: 26° when the area is
+    // landscape or square, opening up toward 40° as it gets tall and narrow
+    // (a phone, or the narrow strip beside an expanded Lens).
+    const fov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(13)) * 0.75 / (w / h));
+    let deg = clamp(THREE.MathUtils.radToDeg(fov), 26, 46);
+    if (h < 440) deg = Math.max(deg, 36);      // short strip above a phone's Lens sheet: pull back so the whole face fits
+    this.camera.fov = deg;
+    this.camera.updateProjectionMatrix();
+    // LAM's renderer only re-measures on a window resize; nudge it once the stage settles.
+    if (this.lam){
+      clearTimeout(this._lamNudge);
+      this._lamNudge = setTimeout(() => { dispatchEvent(new Event('resize')); this.frameLam(); }, 120);   // our own handler returns early: size unchanged
+    }
+  }
+
+  clear(){
+    this.root.clear(); this.meshes = []; this.morph = new Map(); this.rig = null; this.headBone = null;
+    if (this.ph){ this.ph.lips.geometry.dispose(); this.ph.cavity.geometry.dispose(); }
+    this.ph = null;
+  }
+
+  async load(url){
+    this.clear();
+    this.disposeLam();
+    if (/\.zip(\?|#|$)/i.test(url || '')) return this.loadLam(url);
+    if (!url) return this.buildPlaceholder();
+    try {
+      const gltf = await new GLTFLoader().loadAsync(url);
+      const model = gltf.scene;
+      const raw = new Set();
+      model.traverse(o => {
+        if (o.isMesh && o.morphTargetInfluences && o.morphTargetInfluences.length){
+          this.meshes.push(o);
+          const dict = o.morphTargetDictionary || {};
+          for (const name in dict){
+            raw.add(name);
+            const key = normMorph(name);
+            if (!this.morph.has(key)) this.morph.set(key, []);
+            this.morph.get(key).push([o, dict[name]]);
+          }
+        }
+        if (o.isBone && /^head$/i.test(o.name.replace(/^.*[:_]/, '')) && !this.headBone) this.headBone = o;
+      });
+      if (!this.headBone) model.traverse(o => { if (o.isBone && /head/i.test(o.name) && !this.headBone) this.headBone = o; });
+
+      const names = [...raw];
+      console.log('[avatar] morph targets (' + names.length + '):', names);
+      this.rig = this.morph.has(normMorph('viseme_aa')) ? 'oculus'
+               : this.morph.has(normMorph('jawOpen')) ? 'arkit' : null;
+
+      if (!this.rig){
+        const shapes = this.meshes.reduce((n, m) => n + m.morphTargetInfluences.length, 0);
+        if (!shapes) showError('That GLB has no blendshapes at all. In Avaturn, use an export that includes ARKit blendshapes and visemes.');
+        else if (names.every(n => /^\d+$/.test(n)) || !names.length)
+          showError('That GLB has ' + shapes + ' blendshapes but they are unnamed, so the face can’t tell which is which. Re-export with shape names kept.');
+        else showError('Found ' + names.length + ' blendshapes, none recognised as mouth shapes. First few: ' + names.slice(0, 8).join(', ') + '. The full list is in the browser console.');
+        return this.buildPlaceholder();
+      }
+      if (this.headBone) this.headRest = this.headBone.quaternion.clone();
+      this.root.add(model);
+      this.frame(model);
+    } catch (e){
+      showError('Could not load the avatar: ' + e.message);
+      this.buildPlaceholder();
+    }
+  }
+
+  /* Head sits in the upper part of the frame so captions never cover the mouth. */
+  frame(model){
+    const c = new THREE.Vector3();
+    if (this.headBone) this.headBone.getWorldPosition(c);
+    else { const b = new THREE.Box3().setFromObject(model); c.set(0, b.max.y - (b.max.y - b.min.y) * 0.08, 0); }
+    this.root.position.set(-c.x, -c.y - 0.04, -c.z);
+    this.setFraming(new THREE.Vector3(0, 0.02, 0.78), new THREE.Vector3(0, -0.04, 0));
+  }
+
+  buildPlaceholder(){
+    const g = new THREE.Group();
+    const skin = new THREE.MeshStandardMaterial({ color:0xa7b5c6, roughness:.7, metalness:.04 });
+    const dark = new THREE.MeshStandardMaterial({ color:0x141a22, roughness:.4 });
+
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.115, 64, 48), skin);
+    head.scale.set(1, 1.22, 1.02); g.add(head);
+
+    const eyeGeo = new THREE.SphereGeometry(0.0155, 24, 18);
+    const eyeL = new THREE.Mesh(eyeGeo, dark), eyeR = new THREE.Mesh(eyeGeo, dark);
+    eyeL.position.set(-0.041, 0.03, 0.101); eyeR.position.set(0.041, 0.03, 0.101);
+    g.add(eyeL, eyeR);
+
+    const browGeo = new THREE.CapsuleGeometry(0.0022, 0.024, 4, 8); browGeo.rotateZ(Math.PI / 2);
+    const browL = new THREE.Mesh(browGeo, dark), browR = new THREE.Mesh(browGeo, dark);
+    browL.position.set(-0.042, 0.058, 0.103); browR.position.set(0.042, 0.058, 0.103);
+    browL.rotation.z = 0.08; browR.rotation.z = -0.08;
+    g.add(browL, browR);
+
+    // mouth: cavity, teeth, lips — rebuilt each frame from the current shape
+    const mouth = new THREE.Group();
+    mouth.position.set(0, -0.052, 0.1085);
+    mouth.rotation.x = 0.32;
+    const cavity = new THREE.Mesh(new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color:0x2a1216 }));
+    const teeth = new THREE.Mesh(new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshStandardMaterial({ color:0xe9e5dc, roughness:.35, transparent:true }));
+    const lips = new THREE.Mesh(new THREE.BufferGeometry(),
+      new THREE.MeshStandardMaterial({ color:0x9c7883, roughness:.55, side:THREE.DoubleSide }));
+    teeth.position.z = 0.0006; lips.position.z = 0.0012;
+    mouth.add(cavity, teeth, lips);
+    g.add(mouth);
+
+    this.root.add(g);
+    this.ph = { g, eyeL, eyeR, browL, browR, cavity, teeth, lips };
+    this.setFraming(new THREE.Vector3(0, 0.02, 0.72), new THREE.Vector3(0, -0.035, 0));
+  }
+
+  /* Wrap a flat shape onto the head's curve so the mouth corners don't sink in. */
+  static curve(geo){
+    const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++){ const x = p.getX(i); p.setZ(i, p.getZ(i) - x * x / 0.22); }
+    p.needsUpdate = true; geo.computeVertexNormals();
+    return geo;
+  }
+
+  drawMouth(w){
+    // blend the shape table by the current viseme weights
+    let W = 0, Op = 0, R = 0, T = 0, P = 0, S = 0;
+    for (const v of VISEMES){
+      const k = w[v] || 0; if (k <= 0) continue;
+      const s = SHAPE[v]; W += s.w * k; Op += s.o * k; R += s.r * k; T += s.t * k; P += (s.press || 0) * k; S += k;
+    }
+    if (S < 1e-3){ W = 1; S = 1; }
+    W /= S; Op /= S; R /= S; T /= S; P = clamp(P);
+    Op = Math.max(Op, (w.jaw || 0) * 0.9);
+
+    const hw = 0.027 * W;                          // half width
+    const h  = Op * 0.026;                         // total opening
+    const up = h * 0.32, dn = h * 0.68;            // the jaw does most of the work
+    const k  = 1.35 - 0.55 * R;                    // >1: lens with pointed corners, <1: rounder
+    const N = 44, inner = [], outer = [];
+    const lipU = 0.0052 + 0.0012 * P, lipD = 0.0068 + 0.0012 * P;
+
+    for (let i = 0; i < N; i++){
+      const th = (i / N) * Math.PI * 2;
+      const c = Math.cos(th), s = Math.sin(th);
+      const yy = Math.pow(Math.abs(s), k);
+      const iy = s >= 0 ? up * yy : -dn * yy;
+      inner.push(new THREE.Vector2(hw * c, iy));
+      const thick = s >= 0 ? lipU : lipD;
+      outer.push(new THREE.Vector2(hw * c * (1 + 0.1 + 0.1 * R), iy + Math.sign(s || 1) * thick * Math.pow(Math.abs(s), 0.8)));
+    }
+
+    const lipShape = new THREE.Shape(outer);
+    if (h > 0.0007) lipShape.holes.push(new THREE.Path(inner.slice().reverse()));
+    const ph = this.ph;
+    ph.lips.geometry.dispose();
+    ph.lips.geometry = Face.curve(new THREE.ShapeGeometry(lipShape, 2));
+    ph.lips.position.z = 0.0012 + 0.006 * R;      // rounded lips push forward
+
+    ph.cavity.geometry.dispose();
+    const seam = Math.max(h, 0.0007);              // a thin seam shows even when closed
+    const cav = inner.map(v => new THREE.Vector2(v.x, h > 0.0007 ? v.y : v.y / Math.max(h, 1e-6) * seam));
+    ph.cavity.geometry = Face.curve(new THREE.ShapeGeometry(new THREE.Shape(cav), 2));
+
+    const tH = Math.min(0.0065, up + dn * 0.35);
+    ph.teeth.visible = h > 0.002 && T > 0.05;
+    ph.teeth.scale.set(hw * 1.45, Math.max(0.0001, tH), 1);
+    ph.teeth.position.y = up - tH / 2;
+    ph.teeth.material.opacity = clamp(T * 1.2);
+  }
+
+  setMorph(name, v){
+    const hits = this.morph.get(normMorph(name));
+    if (hits) for (const [m, i] of hits) m.morphTargetInfluences[i] = v;
+  }
+
+  apply(w, rel){
+    if (this.meshes.length){
+      if (this.rig === 'oculus'){
+        for (const v of VISEMES) this.setMorph('viseme_' + v, w[v] || 0);
+        this.setMorph('jawOpen', (w.jaw || 0) * 0.5);   // visemes already open the jaw; this adds weight
+      } else {
+        // ARKit-only heads: build each viseme out of the 52 standard face shapes
+        const out = arkitFrom(w, this.blink, rel);
+        for (const name of ARKIT_USED) this.setMorph(name, out[name] || 0);
+      }
+      this.setMorph('eyeBlinkLeft', this.blink); this.setMorph('eyeBlinkRight', this.blink);
+      this.setMorph('browInnerUp', rel * 0.25);
+    }
+    if (this.ph){
+      this.drawMouth(w);
+      const open = 1 - this.blink;
+      this.ph.eyeL.scale.y = this.ph.eyeR.scale.y = Math.max(0.08, open);
+      const lift = rel * 0.0035;
+      this.ph.browL.position.y = this.ph.browR.position.y = 0.058 + lift;
+    }
+  }
+
+  drawMeters(w){
+    const c = this.meterCtx, W = 300, H = 150;
+    c.clearRect(0, 0, W, H);
+    const keys = [...VISEMES, 'jaw'], bw = W / keys.length;
+    keys.forEach((k, i) => {
+      const v = w[k] || 0;
+      c.fillStyle = k === 'jaw' ? '#f2a93b' : k === 'PP' ? '#ff6b61' : '#7fd6c4';
+      c.fillRect(i * bw + 2, H - 22 - v * (H - 58), bw - 4, v * (H - 58));
+      c.fillStyle = '#78838f'; c.font = '9px ui-sans-serif, sans-serif'; c.textAlign = 'center';
+      c.fillText(k, i * bw + bw / 2, H - 8);
+    });
+    c.fillStyle = '#e2e7ee'; c.textAlign = 'left'; c.font = '11px ui-sans-serif, sans-serif';
+    c.fillText('Source: ' + lipsync.source, 4, 12);
+    const ac = lipsync.ctx;
+    c.fillText('Audio: ' + (ac ? ac.state + ' ' + ac.sampleRate + ' Hz' : 'not started') +
+               (navigator.audioSession ? '  session ' + navigator.audioSession.type : ''), 4, 26);
+  }
+
+  setFraming(pos, look){
+    this.camBase = pos; this.look = look;
+    this.camera.position.copy(pos); this.camera.lookAt(look);
+  }
+
+  /* Orbit the camera a few degrees around the face as the phone tilts, and
+     turn the head slightly toward the viewer, so the screen reads as a window. */
+  parallax(dt){
+    const p = tilt.value(dt);
+    if (!this.camBase) return p;
+    // The stage already shrinks to the space above the Lens sheet. When that space
+    // is short and wide, nudge the face up a little so the caption card sits under the chin.
+    const lifted = document.body.classList.contains('lens-open') && this.camera.aspect > 1.1 && innerWidth < 900 ? 1 : 0;
+    this.lift = (this.lift || 0) + (lifted - (this.lift || 0)) * Math.min(1, dt * 5);
+    const look = this.look.clone(); look.y -= 0.03 * this.lift;
+    const off = this.camBase.clone().sub(this.look);
+    this._e2 = this._e2 || new THREE.Euler(); this._q2 = this._q2 || new THREE.Quaternion();
+    off.applyQuaternion(this._q2.setFromEuler(this._e2.set(-p.y * 0.16, p.x * 0.26, 0, 'YXZ')));
+    this.camera.position.copy(look).add(off);
+    this.camera.lookAt(look);
+    $('backdrop').style.transform = `translate3d(${(-p.x * 2.2).toFixed(2)}%, ${(p.y * 1.6).toFixed(2)}%, 0)`;
+    return p;
+  }
+
+  /* ---------------------------------------------------------------- LAM
+     A LAM avatar is a zip (skin.glb, animation.glb, offset.ply,
+     vertex_order.json) rendered as Gaussian splats by LAM's own WebGL
+     renderer. It's driven by ARKit weights — the same ones this page
+     already computes from the lip sync — handed over every frame. */
+  async loadLam(url){
+    this.renderer.domElement.style.display = 'none';
+    let host = $('lamStage');
+    if (!host){ host = document.createElement('div'); host.id = 'lamStage'; $('stage').appendChild(host); }
+    host.innerHTML = ''; host.style.display = 'block';
+    $('stateLabel').textContent = 'Loading face…';
+    try {
+      const mod = await (Face._lamLib = Face._lamLib || import(LAM_LIB_LOCAL).catch(() => import(LAM_LIB)));
+      const GSR = mod.GaussianSplatRenderer;
+      GSR.instance = undefined;
+      const r = await GSR.getInstance(host, new URL(url, location.href).href, {
+        backgroundColor: '0x0e1218',
+        getChatState: () => ({ listening:'Listening', transcribing:'Thinking', thinking:'Thinking',
+                               working:'Thinking', speaking:'Responding' }[state] || 'Idle'),
+        // a fresh object each frame: the renderer scales values in place
+        getExpressionData: () => { const o = {}; for (const k of ARKIT_52) o[k] = this.lamExpr[k] || 0; return o; }
+      });
+      if (!r) throw new Error(await Face.lamDiagnose(url));
+      this.lam = r;
+      const cam = r.getCamera();
+      if (cam){ this.lamCam = cam; this.lamOff = { x:0, y:0 }; this.frameLam(); setTimeout(() => this.frameLam(), 400); }
+    } catch (e){
+      showError('Couldn’t load the LAM avatar: ' + e.message);
+      this.disposeLam(); this.buildPlaceholder();
+    } finally { setState(state); }
+  }
+
+  disposeLam(){
+    if (this.lam){ try { this.lam.dispose(); } catch {} }
+    this.lam = null; this.lamCam = null; this.lamExpr = {};
+    const host = $('lamStage'); if (host){ host.innerHTML = ''; host.style.display = 'none'; }
+    this.renderer.domElement.style.display = '';
+  }
+
+  /* When the renderer gives up it only logs — look inside the zip for the usual culprit. */
+  static async lamDiagnose(url){
+    try {
+      const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+      const text = new TextDecoder('latin1').decode(bytes.slice(Math.max(0, bytes.length - 65536)));
+      const need = ['skin.glb', 'animation.glb', 'offset.ply', 'vertex_order.json'].filter(f => !text.includes(f));
+      if (need.length) return 'the zip is missing ' + need.join(', ') + '. Re-export it with LAM’s OpenAvatarChat export.';
+    } catch (e){ return 'the zip couldn’t be downloaded (' + e.message + ').'; }
+    return 'the renderer rejected it — the browser console has its error.';
+  }
+
+  /* Frame a LAM head. LAM's own default camera always shows the head, small
+     and low: centred left-right, about 0.21 of the frame tall, its centre
+     0.21 below the middle. Slide the camera along that same sightline toward
+     the head (so it stays centred whatever its exact depth, and keeps LAM's
+     slight downward angle), then shift the picture with a lens offset so the
+     face sits in the open area above the captions — no change of perspective.
+     Face size in Setup scales it. */
+  frameLam(){
+    const r = this.lam, cam = this.lamCam;
+    if (!r || !cam || !cam.fov) return;
+    try {
+      const V = cam.position.constructor;
+      if (!this.lamHome || this.lamHome.r !== r)
+        this.lamHome = { r, pos: cam.position.clone(), quat: cam.quaternion.clone() };
+      const home = this.lamHome, t = Math.tan(cam.fov * Math.PI / 360);
+
+      const dir = new V(0, -0.21 * t, -1).normalize().applyQuaternion(home.quat);
+      const hit = Math.abs(dir.z) > 1e-4 ? -home.pos.z / dir.z : 1;   // rough depth of the head
+      const depth = hit > 0 ? hit : 1;
+      const head = home.pos.clone().add(dir.clone().multiplyScalar(depth));
+      const headH = 0.21 * 2 * t * depth;
+
+      const stage = $('stage').getBoundingClientRect(), H = stage.height || innerHeight, W = stage.width || innerWidth;
+      const bar = $('bar').getBoundingClientRect();   // keep clear of the controls plus ~two caption lines
+      const covered = clamp((stage.bottom - bar.top + 96) / H, 0.12, 0.45);
+      const zoom = clamp(parseFloat(CFG.faceSize) || 1, 0.3, 3);
+      const distH = headH / (0.5 * (1 - covered) * zoom) / (2 * t);
+      const distW = (headH * 0.8) / (0.6 * zoom) / (2 * t * (W / H));
+      const dist = Math.max(distH, distW);
+
+      cam.position.copy(head).sub(dir.clone().multiplyScalar(dist));
+      cam.lookAt(head);
+      // Lens shift: centre the open area above the captions, then correct for the
+      // aim point sitting around the collar (about 0.65 face-heights below the
+      // face's middle), plus any nudge from Setup.
+      const facePx = 0.5 * (1 - covered) * zoom * H;
+      const raise = clamp(parseFloat(CFG.faceRaise) || 0, -0.5, 0.5) * H;
+      const shiftY = covered * H / 2 - 0.65 * facePx + raise;
+      if (cam.setViewOffset){ cam.setViewOffset(W, H, 0, shiftY, W, H); cam.updateProjectionMatrix(); }
+      const ctl = r.viewer && r.viewer.perspectiveControls;
+      if (ctl && ctl.target){ ctl.target.copy(head); if (ctl.update) ctl.update(); }
+      this.lamTarget = head; this.lamOff = { x:0, y:0 };
+    } catch (e){
+      console.warn('LAM framing skipped:', e);
+      if (this.lamHome){ cam.position.copy(this.lamHome.pos); cam.quaternion.copy(this.lamHome.quat); }
+      if (cam.clearViewOffset){ cam.clearViewOffset(); cam.updateProjectionMatrix(); }
+    }
+  }
+
+  /* Parallax for LAM: swing its camera around its target by the change in tilt,
+     so it composes with any drag-orbiting the renderer's own controls allow. */
+  lamParallax(tp){
+    const cam = this.lamCam; if (!cam) return;
+    try {
+      const ctl = this.lam.viewer && this.lam.viewer.perspectiveControls;
+      const V = cam.position.constructor;
+      const target = ctl && ctl.target ? ctl.target : (this.lamTarget || new V(0, cam.position.y, 0));
+      const dx = tp.x * 0.26 - this.lamOff.x, dy = -tp.y * 0.16 - this.lamOff.y;
+      if (Math.abs(dx) + Math.abs(dy) < 1e-5) return;
+      const off = cam.position.clone().sub(target);
+      off.applyAxisAngle(new V(0, 1, 0), dx);
+      const right = new V().crossVectors(new V(0, 1, 0), off).normalize();
+      off.applyAxisAngle(right, dy);
+      cam.position.copy(target).add(off); cam.lookAt(target);
+      this.lamOff.x += dx; this.lamOff.y += dy;
+    } catch {}
+  }
+
+  tick(){
+    const dt = Math.min(0.05, this.clock.getDelta()), t = this.clock.elapsedTime;
+    this.nextBlink -= dt;
+    if (this.nextBlink <= 0){ this.blink = 1; this.nextBlink = 2.2 + Math.random() * 4; }
+    if (this.blink > 0) this.blink = Math.max(0, this.blink - dt * 7.5);
+
+    const w = lipsync.step(dt), rel = lipsync.rel;
+    const tp = this.parallax(dt);
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      const amp = state === 'speaking' ? 1.5 : 1;
+      // idle sway, a nod on stressed syllables, and a slight turn toward wherever the viewer moved
+      const yaw = Math.sin(t * 0.38) * 0.022 * amp + Math.sin(t * 1.13) * 0.005 + tp.x * 0.09;
+      const pit = Math.sin(t * 0.52 + 1.2) * 0.014 * amp - rel * 0.02 - tp.y * 0.05;
+      const tgt = this.headBone || (this.ph && this.ph.g);
+      if (this.headBone){
+        // add idle motion on top of the bone's rest pose rather than replacing it
+        this._q = this._q || new THREE.Quaternion(); this._e = this._e || new THREE.Euler();
+        this.headBone.quaternion.copy(this.headRest).multiply(this._q.setFromEuler(this._e.set(pit, yaw, 0)));
+      } else if (tgt){ tgt.rotation.y = yaw; tgt.rotation.x = pit; }
+    }
+    if (CFG.meterMode === 'on') this.drawMeters(w);
+    if (this.lam){
+      this.lamExpr = shapeMouth(a2eFrame() || arkitFrom(w, this.blink, rel));   // read by the LAM renderer on its own frame
+      this.lamParallax(tp);
+      return;
+    }
+    this.apply(w, rel);
+    this.renderer.render(this.scene, this.camera);
+  }
+}
+
+
+/* ================================================================== *
+ * Tilt input
+ *  Phone: device orientation, relative to however you happen to be
+ *  holding it. The neutral point drifts slowly toward the current pose,
+ *  so a new grip re-centres itself in a few seconds.
+ *  Desktop: pointer position.
+ *  iOS asks permission once, on the first tap.
+ * ================================================================== */
+const tilt = (() => {
+  let raw = { x:0, y:0 }, cur = { x:0, y:0 }, base = null, lastEvt = 0, asked = false;
+  const LIM = 22;            // degrees of tilt for full effect
+  function onOrient(e){
+    if (e.beta == null || e.gamma == null) return;
+    const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+    let x = e.gamma, y = e.beta;
+    if (ang === 90){ x = e.beta; y = -e.gamma; }
+    else if (ang === -90 || ang === 270){ x = -e.beta; y = e.gamma; }
+    const now = performance.now();
+    if (!base) base = { x, y };
+    const dt = Math.min(1, (now - (lastEvt || now)) / 1000);
+    base.x += (x - base.x) * dt * 0.25; base.y += (y - base.y) * dt * 0.25;
+    lastEvt = now;
+    raw.x = clamp((x - base.x) / LIM, -1, 1);
+    raw.y = clamp((y - base.y) / LIM, -1, 1);
+  }
+  function onPointer(e){
+    if (performance.now() - lastEvt < 2000) return;      // phone sensor wins when present
+    raw.x = clamp((e.clientX / innerWidth) * 2 - 1, -1, 1) * 0.7;
+    raw.y = clamp((e.clientY / innerHeight) * 2 - 1, -1, 1) * 0.5;
+  }
+  function ask(){
+    if (asked) return; asked = true;
+    const D = window.DeviceOrientationEvent;
+    if (D && typeof D.requestPermission === 'function'){
+      D.requestPermission().then(r => { if (r === 'granted') addEventListener('deviceorientation', onOrient); })
+                           .catch(() => {});
+    } else if (D) addEventListener('deviceorientation', onOrient);
+  }
+  addEventListener('pointermove', onPointer);
+  addEventListener('pointerup', ask);              // must run inside a tap on iOS
+  if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission !== 'function')
+    addEventListener('deviceorientation', onOrient);  // Android: no prompt needed
+  return {
+    value(dt){
+      const on = CFG.tiltMode !== 'off';
+      const tx = on ? raw.x : 0, ty = on ? raw.y : 0;
+      const k = Math.min(1, dt * 6);
+      cur.x += (tx - cur.x) * k; cur.y += (ty - cur.y) * k;
+      return cur;
+    },
+    recenter(){ base = null; }
+  };
+})();
+
+const lipsync = new LipSync();
+const face = new Face($('stage'));
+face.load(CFG.avatarUrl);
+
+/* ================================================================== *
+ * State + captions
+ * ================================================================== */
+let state = 'idle', speaking = false;
+const history = [];
+function setState(s){
+  state = s;
+  $('lamp').className = 'lamp' + (s === 'idle' ? '' : ' ' + s);
+  $('stateLabel').textContent = { idle:'Idle', listening:'Listening', transcribing:'Transcribing',
+                                  thinking:'Thinking', working:'Working', speaking:'Speaking' }[s];
+  $('talk').classList.toggle('hot', s === 'listening');
+}
+const esc = s => (s || '').replace(/[&<>]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]));
+/* Markdown the model slips in anyway reads badly as a caption; keep the line breaks, drop the symbols. */
+const plainReply = s => (s || '')
+  .replace(/```[\s\S]*?(```|$)/g, ' ')
+  .replace(/^\s{0,3}#{1,6}\s+/gm, '').replace(/^\s*[-*+]\s+/gm, '• ')
+  .replace(/\*\*|__|`/g, '').replace(/\n{3,}/g, '\n\n').trim();
+
+const captionBox = (() => {
+  const el = $('caption');
+  let follow = true, lastUser = null;
+  const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight < 6;
+  function marks(){
+    el.classList.toggle('scrolls', el.scrollHeight > el.clientHeight + 2);
+    el.classList.toggle('clipped', el.scrollTop > 2);
+  }
+  // Only a scroll the person makes can unstick the caption from the newest line;
+  // the box resizing (Lens opening, a new reply) also fires scroll events.
+  let userAt = 0;
+  const touched = () => { userAt = performance.now(); };
+  ['wheel', 'touchstart', 'touchmove', 'pointerdown', 'keydown'].forEach(ev => el.addEventListener(ev, touched, { passive:true }));
+  el.addEventListener('scroll', () => { if (performance.now() - userAt < 800) follow = atBottom(); marks(); }, { passive:true });
+  // the box changes height when the Lens opens or closes, not only on window resizes
+  const restick = () => { if (follow) el.scrollTop = el.scrollHeight; marks(); };
+  addEventListener('resize', restick);
+  new ResizeObserver(restick).observe(el);
+  return {
+    set(html, user){
+      if (user !== lastUser){ follow = true; lastUser = user; }     // a new exchange starts at the newest line
+      el.innerHTML = html;
+      el.classList.toggle('empty', !el.textContent.trim());     // no empty glass card while thinking
+      if (follow) el.scrollTop = el.scrollHeight;
+      marks();
+    }
+  };
+})();
+
+/* The last user line and reply shown, so a follow-up listen can keep the question on screen. */
+let lastCap = { user:'', reply:'' };
+function caption(user, reply, interim){
+  if (reply || !interim) lastCap = { user:user || '', reply:reply || '' };
+  captionBox.set((user ? `<span class="you">${esc(user)}</span>` : '') +
+    (reply || !interim ? `<span class="reply">${esc(plainReply(reply))}</span>` : '') +
+    (interim ? `<span class="interim">${esc(interim)}</span>` : ''), user || '');
+}
+
+/* ================================================================== *
+ * Listening
+ *  server:  record → POST to a transcription endpoint (Open WebUI's own
+ *           whisper by default). Works on any browser, stays local.
+ *  browser: Web Speech API — needs a cloud service; fails with
+ *           "network" on Linux builds of Chrome/Chromium.
+ *
+ * When does your turn end?
+ *  - after you've been quiet for the "pause before it replies" setting
+ *    (1.4 s by default), measured from the last moment you were above
+ *    the room's noise floor
+ *  - straight away if you tap the microphone
+ *  - never on its own while you hold the space bar (push-to-talk)
+ *  The noise floor is tracked continuously from the quiet moments, with
+ *  separate thresholds for "speech has started" and "speech is still
+ *  going", so trailing soft words and mid-sentence breaths don't end it.
+ *
+ * auto = this listen was opened by the avatar after it asked something,
+ * not by a tap. Its question stays on screen, and if you say nothing it
+ * just goes quiet instead of replacing the question with an error.
+ * ================================================================== */
+let rec = null, micCtx = null;
+const pauseMs = () => clamp(parseFloat(CFG.endSilence) || 1.4, 0.4, 6) * 1000;
+
+function listenCaption(auto, interim){
+  if (auto) caption(lastCap.user, lastCap.reply, interim);
+  else caption('', '', interim);
+}
+function quietEnd(auto, msg){
+  setState('idle');
+  if (auto) caption(lastCap.user, lastCap.reply);      // leave the question up; the mic just closes
+  else caption('', msg);
+}
+
+async function startServerListening(auto){
+  let stream;
+  setSession('play-and-record');
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
+  } catch (e){
+    setSession('playback');
+    if (auto) quietEnd(true); else showError('Microphone access was blocked: ' + e.message);
+    return;
+  }
+
+  /* A separate context for level detection — never shares a clock or sample
+     rate with playback. It's kept between turns: a context that a tap once
+     started can be resumed later without a tap, which an automatic listen needs. */
+  let src;
+  try {
+    if (!micCtx || micCtx.state === 'closed') micCtx = new (window.AudioContext || window.webkitAudioContext)();
+    try { await micCtx.resume(); } catch {}
+    src = micCtx.createMediaStreamSource(stream);
+  } catch {                                            // mic's sample rate changed: start fresh
+    try { micCtx.close(); } catch {}
+    micCtx = new (window.AudioContext || window.webkitAudioContext)();
+    try { await micCtx.resume(); } catch {}
+    src = micCtx.createMediaStreamSource(stream);
+  }
+  if (micCtx.state !== 'running' && auto){
+    // the browser wants a tap before it lets us hear the mic; don't pretend to listen
+    stream.getTracks().forEach(t => t.stop()); setSession('playback');
+    setState('idle'); caption(lastCap.user, lastCap.reply, 'Tap the microphone to answer.');
+    return;
+  }
+  const an = micCtx.createAnalyser(); an.fftSize = 1024;
+  src.connect(an);                                     // not connected to speakers
+  const buf = new Float32Array(an.fftSize);
+
+  const type = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+             : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+  const mr = new MediaRecorder(stream, type ? { mimeType:type } : undefined);
+  const chunks = [];
+  mr.ondataavailable = e => e.data.size && chunks.push(e.data);
+
+  const handle = { held:false, stop: () => { if (mr.state !== 'inactive') mr.stop(); } };
+  const hang = pauseMs(), waitFor = auto ? 8000 : 7000;
+  const t0 = performance.now();
+  let spoke = false, voicedMs = 0, lastLoud = t0, floor = null, level = -90;
+  const vad = setInterval(() => {
+    an.getFloatTimeDomainData(buf);
+    let s = 0; for (const x of buf) s += x * x;
+    const db = 10 * Math.log10(s / buf.length + 1e-10), now = performance.now();
+    // smoothed level: rises fast, falls a bit slower, so one quiet frame between syllables doesn't count as a pause
+    level += (db - level) * (db > level ? 0.6 : 0.3);
+    // room noise floor: drops quickly to quiet moments, creeps up only slowly, so your own voice never becomes "the room"
+    if (floor === null) floor = db;
+    floor += (db - floor) * (db < floor ? 0.3 : 0.004);
+    const startAt = Math.max(-52, floor + 12);       // loud enough to mean speech has begun
+    const keepAt  = Math.max(-58, floor + 6);        // once talking, softer sounds still count as talking
+    if (level > startAt){
+      voicedMs += 50; lastLoud = now;
+      if (voicedMs >= 200) spoke = true;             // a click or cough alone doesn't start your turn
+    } else if (spoke && level > keepAt) lastLoud = now;
+    $('talk').style.setProperty('--lvl', clamp((db + 60) / 40).toFixed(2));
+    if (handle.held) return;                         // push-to-talk: only releasing the key ends the turn
+    if ((spoke && now - lastLoud > hang) || (!spoke && now - t0 > waitFor) || now - t0 > 60000) handle.stop();
+  }, 50);
+
+  mr.onstop = async () => {
+    clearInterval(vad); src.disconnect(); stream.getTracks().forEach(t => t.stop());
+    micCtx.suspend().catch(() => {});
+    setSession('playback');
+    const pctx = lipsync.ensure(); if (pctx.state !== 'running') pctx.resume().catch(() => {});
+    $('talk').style.setProperty('--lvl', 0); rec = null;
+    if (!spoke || !chunks.length){ quietEnd(auto, 'I didn’t hear anything. Press the microphone to try again.'); return; }
+    setState('transcribing'); caption('', '', 'Transcribing…');
+    try {
+      const text = await transcribe(new Blob(chunks, { type: mr.mimeType || 'audio/webm' }));
+      if (text) ask(text, 'voice'); else quietEnd(auto, 'I couldn’t make out any words.');
+    } catch (e){ setState('idle'); showError(e.message); }
+  };
+
+  rec = handle;
+  mr.start(250);
+  setState('listening'); listenCaption(auto, 'Listening…');
+}
+
+async function transcribe(blob){
+  const fd = new FormData();
+  const ext = blob.type.includes('mp4') ? 'm4a' : 'webm';
+  fd.append('file', blob, 'speech.' + ext);
+  fd.append('model', CFG.sttModel);
+  fd.append('response_format', 'json');
+  const res = await fetch(CFG.sttUrl, { method:'POST', headers:authHeader(CFG.sttKey), body:fd });
+  if (res.status === 401 || res.status === 403)
+    throw new Error('Transcription was refused (' + res.status + '). If the address points at Open WebUI, it needs an Open WebUI API key under Setup → Listening.');
+  if (!res.ok){
+    const body = await res.text().catch(() => '');
+    if (res.status === 404 && /model/i.test(body))
+      throw new Error('The transcription server doesn’t have “' + CFG.sttModel + '” downloaded yet. Download it on the server, or change the model in Setup → Listening.');
+    throw new Error('Transcription failed (' + res.status + '). Check the transcription address in Setup.');
+  }
+  const j = await res.json();
+  return (j.text || '').trim();
+}
+
+/* Browser recognition runs in continuous mode so its own (very eager)
+   end-of-speech detection doesn't cut you off; we end the turn ourselves
+   after the same pause as server mode. */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function startBrowserListening(auto){
+  if (!SR){ showError('This browser has no speech recognition. Switch Speech input to “Record and transcribe on your server”.'); return; }
+  const r = new SR(); r.lang = 'en-US'; r.interimResults = true; r.continuous = true;
+  let fin = '', interim = '', timer = null;
+  const handle = { held:false, stop: () => { clearTimeout(timer); try { r.stop(); } catch {} } };
+  // results arrive a little after the words, so allow a bit extra on top of the pause
+  const arm = ms => { clearTimeout(timer); timer = setTimeout(() => handle.held ? arm(pauseMs()) : handle.stop(), ms); };
+  r.onresult = e => {
+    interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++){
+      if (e.results[i].isFinal) fin += e.results[i][0].transcript; else interim += e.results[i][0].transcript;
+    }
+    listenCaption(auto, fin + interim);
+    arm(pauseMs() + 400);
+  };
+  r.onerror = e => {
+    if (e.error === 'network') showError('Browser speech recognition can’t reach its service on this device. In Setup, switch Speech input to “Record and transcribe on your server”.');
+    else if (e.error !== 'aborted' && e.error !== 'no-speech' && !auto) showError('Microphone: ' + e.error);
+  };
+  r.onend = () => {
+    clearTimeout(timer); rec = null;
+    const text = (fin + ' ' + interim).trim();
+    if (text) ask(text, 'voice'); else quietEnd(auto, 'I didn’t hear anything. Press the microphone to try again.');
+  };
+  rec = handle;
+  try { r.start(); } catch { rec = null; quietEnd(auto, 'The microphone couldn’t start.'); return; }
+  arm(auto ? 8000 : 7000);
+  setState('listening'); listenCaption(auto, 'Listening…');
+  lipsync.ensure().resume();
+}
+
+function startListening(auto){
+  stopSpeaking();
+  if (CFG.sttMode === 'browser') startBrowserListening(!!auto); else startServerListening(!!auto);
+}
+
+$('talk').onclick = () => {
+  lipsync.unlock();
+  if (rec) rec.stop();
+  else if (state === 'speaking' || state === 'thinking'){ stopSpeaking(); setState('idle'); }
+  else if (state === 'idle') startListening();
+};
+$('typeBtn').onclick = () => {
+  const on = !document.body.classList.contains('typing');
+  document.body.classList.toggle('typing', on);
+  $('typed').style.display = on ? 'block' : 'none';
+  if (on) $('typedInput').focus();
+};
+$('typedInput').onkeydown = e => {
+  if (e.key === 'Enter' && e.target.value.trim()){
+    lipsync.unlock(); stopSpeaking();
+    ask(e.target.value.trim(), 'typed'); e.target.value = '';
+  }
+};
+
+/* ================================================================== *
+ * Model — streamed; each finished sentence goes straight to speech
+ * ================================================================== */
+let streaming = false;
+
+/* Turn-taking: after a spoken exchange, if the reply ends in a question
+   (or the setting is "always"), open the mic again once the avatar has
+   finished speaking. Only for turns you spoke — if you typed, it waits. */
+let followUp = -1;                                     // the generation that should be answered
+const endsWithQuestion = s => /\?["'”’)\]]*$/.test(plainReply(s).trim());
+function settle(){
+  // back to idle once nothing is streaming, queued, or playing
+  if (!streaming && !draining && !speaking && !queue.length &&
+      (state === 'thinking' || state === 'working' || state === 'speaking')){
+    setState('idle');
+    if (followUp === generation){
+      followUp = -1;
+      const g = generation;
+      setTimeout(() => {                                 // let the last syllable clear the room first
+        if (g !== generation || state !== 'idle' || rec) return;
+        if ($('theater').classList.contains('on') || $('settings').classList.contains('open')) return;
+        startListening(true);
+      }, 350);
+    }
+  }
+}
+
+const TOOL_PROMPT = ' You can use tools. When a tool result is shown on screen, it is already in front of the user in the Lens panel: never read its contents, numbers, or tables aloud — say one short sentence about what is showing. Before anything slow or with side effects, such as running a notebook, ask out loud and wait for a yes. You can hide or reopen the panel with hide_panel and show_panel.';
+
+/* Keep the context short, and never start it in the middle of a tool exchange. */
+function recentHistory(){
+  const h = history.slice(-24);
+  const k = h.findIndex(m => m.role === 'user');
+  return k > 0 ? h.slice(k) : h;
+}
+
+/* One streamed model turn. Speaks text as sentences complete; collects tool calls. */
+async function streamTurn(gen, onText){
+  const list = tools.list();
+  const body = { model:CFG.llmModel, stream:true,
+    messages:[{ role:'system', content:CFG.sysPrompt + (list.length ? TOOL_PROMPT : '') }, ...recentHistory()] };
+  if (list.length){ body.tools = list; body.tool_choice = 'auto'; }
+  if (CFG.thinking === 'off') body.chat_template_kwargs = { enable_thinking:false };
+  const res = await fetch(CFG.llmBase.replace(/\/$/, '') + '/chat/completions', {
+    method:'POST', headers:{ 'Content-Type':'application/json', ...authHeader(CFG.llmKey) }, body:JSON.stringify(body) });
+  if (res.status === 401) throw new Error('the model refused the key — set API key under Setup → Model');
+  if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+
+  const reader = res.body.getReader(), dec = new TextDecoder();
+  let buf = '', content = '', pending = '', spokeFirst = false;
+  const calls = [];
+  while (true){
+    const { done, value } = await reader.read();
+    if (done || gen !== generation) break;
+    buf += dec.decode(value, { stream:true });
+    const lines = buf.split('\n'); buf = lines.pop();
+    for (const line of lines){
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') continue;
+      let j; try { j = JSON.parse(data); } catch { continue; }
+      const delta = j.choices?.[0]?.delta || {};
+      if (delta.content){
+        content += delta.content; pending += delta.content; onText(delta.content);
+        let m;
+        // The first words of a reply go to speech at the first comma, colon or
+        // dash once there are a few words, so Kokoro starts while the model is
+        // still on the rest of the sentence. After that, whole sentences.
+        if (!spokeFirst && (m = pending.match(/^([\s\S]{24,}?[,;:—–]\s)/))){
+          enqueue(m[1]); pending = pending.slice(m[1].length); spokeFirst = true;
+        }
+        while ((m = pending.match(/^([\s\S]*?[.!?…]["')\]]*\s)/)) && m[1].trim().length > 12){
+          enqueue(m[1]); pending = pending.slice(m[1].length); spokeFirst = true;
+        }
+      }
+      for (const d of delta.tool_calls || []){
+        const k = d.index ?? 0;
+        calls[k] = calls[k] || { id:'', type:'function', function:{ name:'', arguments:'' } };
+        if (d.id) calls[k].id = d.id;
+        if (d.function?.name) calls[k].function.name += d.function.name;
+        if (d.function?.arguments) calls[k].function.arguments += d.function.arguments;
+      }
+    }
+  }
+  if (pending.trim() && gen === generation) enqueue(pending);
+  const toolCalls = calls.filter(c => c && c.function.name)
+    .map((c, k) => ({ ...c, id: c.id || ('call_' + Date.now() + '_' + k) }));
+  return { content, toolCalls };
+}
+
+async function ask(text, via){
+  setState('thinking'); caption(text, '');
+  followUp = -1;
+  streaming = true;
+  history.push({ role:'user', content:text });
+  const gen = generation;
+  let shown = '';
+  try {
+    for (let round = 0; round < 5; round++){
+      const r = await streamTurn(gen, d => { shown += d; caption(text, shown); });
+      if (gen !== generation) break;
+      if (!r.toolCalls.length){ history.push({ role:'assistant', content:r.content }); break; }
+      history.push({ role:'assistant', content:r.content || '', tool_calls:r.toolCalls });
+      for (const tc of r.toolCalls){
+        if (gen !== generation) break;
+        if (!speaking) setState('working');
+        const out = await tools.run(tc).catch(e => 'Tool error: ' + e.message);
+        history.push({ role:'tool', tool_call_id:tc.id, content:out });
+      }
+      if (shown) shown += ' ';
+      if (!speaking) setState('thinking');
+    }
+    // spoken turn + a reply that asks something → listen for the answer once it's done talking
+    if (via === 'voice' && gen === generation && shown.trim() &&
+        (CFG.followUp === 'always' || (CFG.followUp !== 'off' && endsWithQuestion(shown)))) followUp = gen;
+  } catch (e){
+    showError('Model request failed: ' + e.message);
+  } finally {
+    streaming = false; settle();
+  }
+}
+
+/* ================================================================== *
+ * Speech out — Kokoro, with word timings when available
+ * ================================================================== */
+const queue = [];
+let current = null, draining = false, generation = 0;
+
+const clean = s => s.replace(/```[\s\S]*?```/g, ' ').replace(/[*_#`>]/g, '').replace(/\s+/g, ' ').trim();
+const kokoroRoot = () => CFG.ttsBase.replace(/\/$/, '').replace(/\/v1$/, '');
+
+/* Mute: replies still stream into the captions, but nothing is sent to Kokoro
+   and nothing plays. Turning it on mid-reply cuts the voice off without
+   stopping the reply itself. Remembered across visits. */
+let muted = false;
+try { muted = localStorage.getItem('avatarMuted') === '1'; } catch {}
+function silence(){
+  queue.length = 0;
+  if (current){ try { current.stop(); } catch {} }
+  speaking = false; lipsync.detach();
+}
+function setMuted(on){
+  muted = !!on;
+  try { localStorage.setItem('avatarMuted', muted ? '1' : '0'); } catch {}
+  const b = $('muteBtn');
+  b.classList.toggle('muted', muted);
+  b.setAttribute('aria-pressed', String(muted));
+  b.setAttribute('aria-label', muted ? 'Unmute voice' : 'Mute voice');
+  b.title = (muted ? 'Unmute voice' : 'Mute voice') + ' (M)';
+  if (muted){ silence(); if (state === 'speaking') setState(streaming ? 'thinking' : 'idle'); settle(); }
+}
+$('muteBtn').onclick = () => { lipsync.unlock(); setMuted(!muted); };
+setMuted(muted);
+
+function enqueue(sentence, force){
+  if (muted && !force) return;
+  const t = clean(sentence); if (!t) return;
+  const gen = generation;
+  const job = (CFG.lipMode === 'audio'
+    ? fetchPlain(t)
+    : fetchTimed(t).catch(() => fetchPlain(t))
+  ).then(withA2E);
+  queue.push({ text:t, gen, job, force:!!force });
+  if (!draining) drain();
+}
+
+/* Lip-sync model (LAM Audio2Expression on your server): the speech audio goes
+   in, 30 frames a second of ARKit weights come out, lined up with playback.
+   Only used for a LAM face; anything else, or any failure, keeps the
+   word-timing visemes, so speech never waits on this. */
+let a2eWarned = false;
+async function withA2E(clip){
+  if (CFG.lipMode !== 'a2e' || !face.lam) return clip;
+  try {
+    const r = await fetch(CFG.a2eUrl, { method:'POST', headers:{ 'Content-Type':'application/octet-stream' },
+      body: new Blob([clip.data]) });
+    if (!r.ok) throw new Error('lip-sync server ' + r.status);
+    const j = await r.json();
+    const names = j.names.map(n => n === 'cheekPuff' ? 'mouthCheekPuff' : n);
+    clip.a2e = { frames: j.frames, fps: j.fps, map: ARKIT_52.map(k => names.indexOf(k)) };
+  } catch (e){
+    if (!a2eWarned){ a2eWarned = true; showError('Lip-sync model unreachable (' + e.message + '). Using word timings instead — check the lip-sync address in Setup.'); }
+  }
+  return clip;
+}
+
+/* Mouth strength for a LAM face. LAM has no teeth, so a wide-open jaw shows a
+   dark gap: scale every mouth shape by Mouth movement, then cap the jaw at
+   Widest jaw opening. mouthClose rides with the jaw, so it's held to the same cap. */
+function shapeMouth(o){
+  const g = clamp(parseFloat(CFG.mouthGain) || 1, 0, 2);
+  const cap = clamp(parseFloat(CFG.jawMax), 0, 1);
+  const jawCap = isNaN(cap) ? 1 : cap;
+  for (const k in o){
+    if (k === 'jawOpen' || k === 'mouthClose') o[k] = Math.min(o[k] * g, jawCap);
+    else if (k.startsWith('mouth') && k !== 'mouthCheekPuff') o[k] = clamp(o[k] * g);
+  }
+  return o;
+}
+
+function a2eFrame(){
+  const c = a2eNow; if (!c) return null;
+  const i = Math.floor((c.ctx.currentTime - c.t0) * c.fps);
+  if (i < 0 || i >= c.frames.length) return null;
+  const f = c.frames[i], o = {};
+  for (let j = 0; j < ARKIT_52.length; j++) o[ARKIT_52[j]] = c.map[j] >= 0 ? f[c.map[j]] : 0;
+  return o;
+}
+
+async function fetchPlain(text){
+  const res = await fetch(CFG.ttsBase.replace(/\/$/, '') + '/audio/speech', {
+    method:'POST', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ model:'kokoro', voice:CFG.ttsVoice, input:text,
+      response_format:'mp3', speed:parseFloat(CFG.ttsSpeed) || 1 })
+  });
+  if (!res.ok) throw new Error('TTS ' + res.status);
+  return { data: await res.arrayBuffer(), timeline: null };
+}
+
+/* One request returns the audio and per-word timings; a second gets phonemes for the same text. */
+async function fetchTimed(text){
+  const root = kokoroRoot();
+  const [cap, phon] = await Promise.all([
+    fetch(root + '/dev/captioned_speech', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ model:'kokoro', voice:CFG.ttsVoice, input:text, response_format:'mp3',
+        speed:parseFloat(CFG.ttsSpeed) || 1, stream:false, return_timestamps:true })
+    }).then(r => { if (!r.ok) throw new Error('captioned ' + r.status); return r.json(); }),
+    fetch(root + '/dev/phonemize', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ text, language:'a' })
+    }).then(r => r.ok ? r.json() : null).catch(() => null)
+  ]);
+
+  const bin = atob(cap.audio), bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const data = bytes.buffer;
+
+  const words = (cap.timestamps || [])
+    .map(w => ({ word: w.word ?? w.text ?? '', start: +(w.start_time ?? w.start), end: +(w.end_time ?? w.end) }))
+    .filter(w => /[A-Za-z0-9]/.test(w.word) && isFinite(w.start) && isFinite(w.end));
+  if (!words.length) return { data, timeline: null };
+
+  let phonWords = null;
+  if (phon && phon.phonemes){
+    const p = phon.phonemes.split(/\s+/).map(s => s.replace(/[^\p{L}ʰʲᵊ]/gu, '')).filter(Boolean);
+    if (p.length === words.length) phonWords = p;
+  }
+  return { data, timeline: buildTimeline(words, phonWords) };
+}
+
+async function drain(){
+  draining = true;
+  while (queue.length){
+    const item = queue.shift();
+    if (item.gen !== generation) continue;
+    let clip;
+    try { clip = await item.job; }
+    catch (e){ showError('Speech failed: ' + e.message + '. Check the Kokoro address in Setup.'); continue; }
+    if (item.gen !== generation || (muted && !item.force)) continue;
+    await play(clip, item.gen, item.force);
+  }
+  draining = false;
+  settle();
+}
+
+/* Decoded and played through the AudioContext, which the tap unlocked.
+   An <audio> element started later, outside the tap, is blocked on iOS. */
+async function play(clip, gen, force){
+  const ctx = lipsync.ensure();
+  if (ctx.state !== 'running'){ try { await ctx.resume(); } catch {} }
+  if (ctx.state !== 'running'){ await new Promise(r => setTimeout(r, 150)); try { await ctx.resume(); } catch {} }
+  if (ctx.state !== 'running'){
+    showError('The browser is holding audio until you tap. Tap the microphone or Test voice once, then try again.');
+    return;
+  }
+  let buf;
+  try { buf = await ctx.decodeAudioData(clip.data); }
+  catch (e){ showError('Couldn’t decode the speech audio: ' + (e.message || e)); return; }
+  if (gen !== generation || (muted && !force)) return;
+  return new Promise(resolve => {
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(lipsync.analyser);
+    const at = ctx.currentTime + 0.03;
+    current = src;
+    src.onended = () => {
+      speaking = false; lipsync.detach();
+      if (current === src) current = null;
+      if (a2eNow && a2eNow.src === src) a2eNow = null;
+      resolve();
+    };
+    lipsync.start(at, clip.timeline);
+    a2eNow = clip.a2e ? { ...clip.a2e, ctx, t0: at, src } : null;
+    speaking = true; setState('speaking');
+    src.start(at);
+  });
+}
+
+function stopSpeaking(){
+  generation++; queue.length = 0;
+  if (current){ try { current.stop(); } catch {} }
+  speaking = false;
+}
+
+/* ================================================================== */
+$('testVoice').onclick = () => {
+  lipsync.unlock(); stopSpeaking();
+  const line = 'Peter Piper picked a peck of pickled peppers. Watch my lips close on every P, and open wide on the vowels.';
+  caption('', line); enqueue(line, true);   // a test always plays, even while muted
+};
+
+let ptt = 0;
+addEventListener('keyup', e => {
+  if (e.code !== 'Space') return;
+  clearTimeout(ptt);
+  if (rec && rec.held) rec.stop();
+});
+addEventListener('keydown', e => {
+  const typing = /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
+  if (e.code === 'Space' && !typing){
+    e.preventDefault();
+    if (e.repeat) return;
+    $('talk').click();
+    // still held after a moment → push-to-talk: the pause timer is off until you let go
+    clearTimeout(ptt); ptt = setTimeout(() => { if (rec) rec.held = true; }, 450);
+  }
+  if ((e.key === 'm' || e.key === 'M') && !typing && !e.metaKey && !e.ctrlKey && !e.altKey){ e.preventDefault(); $('muteBtn').click(); }
+  if (e.key === 'Escape'){ stopSpeaking(); rec?.stop(); setState('idle'); }
+});
+
+/* ================================================================== *
+ * Camera — a FaceTime-style self view. The video never leaves the
+ * page: it isn't recorded, uploaded, or sent to the model.
+ * Drag the tile; it snaps to the nearest corner.
+ * ================================================================== */
+const cam = (() => {
+  let stream = null, timer = null, t0 = 0;
+  const tile = $('selfTile'), vid = $('selfVideo'), btn = $('camBtn');
+  async function on(){
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ ideal:720 }, height:{ ideal:960 } }, audio:false });
+    } catch (e){ showError('Camera access was blocked: ' + e.message); return; }
+    vid.srcObject = stream; vid.play().catch(() => {});
+    tile.classList.add('on'); btn.setAttribute('aria-pressed', 'true'); btn.classList.add('active'); btn.querySelector('.lbl').textContent = 'End';
+    $('callName').textContent = CFG.callNameInput || 'Avatar';
+    $('callBar').classList.add('on');
+    t0 = performance.now();
+    timer = setInterval(() => {
+      const sec = Math.floor((performance.now() - t0) / 1000);
+      $('callTime').textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+    }, 500);
+  }
+  function off(){
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; vid.srcObject = null; clearInterval(timer);
+    tile.classList.remove('on'); $('callBar').classList.remove('on');
+    btn.setAttribute('aria-pressed', 'false'); btn.classList.remove('active'); btn.querySelector('.lbl').textContent = 'Camera';
+  }
+  btn.onclick = () => { lipsync.unlock(); stream ? off() : on(); };
+
+  // drag + snap to a corner, clear of the call bar and the controls
+  let drag = null;
+  tile.addEventListener('pointerdown', e => {
+    const r = tile.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    tile.classList.add('dragging'); tile.setPointerCapture(e.pointerId);
+  });
+  tile.addEventListener('pointermove', e => {
+    if (!drag) return;
+    tile.style.left = (e.clientX - drag.dx) + 'px'; tile.style.top = (e.clientY - drag.dy) + 'px';
+    tile.style.right = 'auto'; tile.style.bottom = 'auto';
+  });
+  const snap = () => {
+    if (!drag) return; drag = null; tile.classList.remove('dragging');
+    const r = tile.getBoundingClientRect(), m = 14;
+    const safeTop = parseFloat(getComputedStyle(document.documentElement).paddingTop) || 0;
+    // snap to a corner of the avatar's area, so it never lands under the Lens
+    const st = $('stage').getBoundingClientRect();
+    const floor = Math.min(st.bottom, innerHeight - $('bar').offsetHeight) - 12;
+    const left = (r.left + r.width / 2) < st.left + st.width / 2 ? st.left + m : st.right - r.width - m;
+    const top  = (r.top + r.height / 2) < st.top + st.height / 2 ? m + safeTop : Math.max(m + safeTop, floor - r.height);
+    tile.style.left = left + 'px'; tile.style.top = top + 'px';
+  };
+  tile.addEventListener('pointerup', snap); tile.addEventListener('pointercancel', snap);
+  return { on, off };
+})();
+
+/* ================================================================== *
+ * Lens panel — tool results float over the call. Phones get a bottom
+ * sheet you can drag taller, shorter, or down to close; wide screens
+ * get a side panel. Results stay as tabs until you close them.
+ * ================================================================== */
+const lens = (() => {
+  const el = $('lens'), frame = $('lensFrame'), tabs = $('lensTabs'), empty = $('lensEmpty'), btn = $('lensBtn');
+  const items = []; let cur = -1, size = 'half';
+  const root = document.documentElement;
+  const base = '<base href="' + location.origin + '/" target="_blank">';
+  /* Runs inside the sandboxed panel. Video players can't work nested in the
+     sandbox, so every player — clicked thumbnails, embedded iframes, players
+     a carousel creates later — becomes a Play tile that hands the video to
+     the avatar page, which plays it in the theater outside the sandbox. */
+  function panelHelper(){
+    var VIDEO = /(youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|dailymotion\.com|soundcloud\.com|spotify\.com\/embed|archive\.org\/embed|brightcove|ted\.com|facebook\.com\/plugins\/video|c-span\.org)/i;
+    function play(src, title){ parent.postMessage({ type:'lens:play', src:src, title:title || '' }, '*'); }
+    document.addEventListener('click', function(e){
+      var t = e.target instanceof Element ? e.target : e.target.parentElement; if (!t) return;
+      var el = t.closest('[data-embed],[data-lens-play]');
+      if (!el) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      play(el.getAttribute('data-embed') || el.getAttribute('data-lens-play'),
+           (el.getAttribute('aria-label') || '').replace(/^Play\s+/, '') || el.getAttribute('data-lens-title'));
+    }, true);
+    function swap(f){
+      var src = f.getAttribute('src') || '';
+      if (!VIDEO.test(src) || f.getAttribute('data-lens-swapped')) return;
+      var b = document.createElement('button');
+      b.setAttribute('data-lens-play', src); b.setAttribute('data-lens-title', f.getAttribute('title') || '');
+      b.setAttribute('data-lens-swapped', '1');
+      b.innerHTML = '<span style="font-size:20px">&#9654;</span><span>Play video</span>';
+      b.style.cssText = 'width:100%;aspect-ratio:16/9;display:flex;align-items:center;justify-content:center;gap:10px;' +
+        'background:#000;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:4px;font:600 14px system-ui,sans-serif;cursor:pointer';
+      f.replaceWith(b);
+    }
+    function scan(n){
+      if (n.tagName === 'IFRAME') swap(n);
+      if (n.querySelectorAll) n.querySelectorAll('iframe').forEach(swap);
+    }
+    new MutationObserver(function(ms){ ms.forEach(function(m){ m.addedNodes.forEach(function(n){ if (n.nodeType === 1) scan(n); }); }); })
+      .observe(document.documentElement, { childList:true, subtree:true });
+    document.addEventListener('DOMContentLoaded', function(){ scan(document); });
+  }
+  const helper = '<script>(' + panelHelper.toString() + ')();<' + '/script>';
+  const withBase = html => /<head[^>]*>/i.test(html)
+    ? html.replace(/<head[^>]*>/i, m => m + base + helper)
+    : base + helper + html;
+
+  function paint(){
+    tabs.innerHTML = '';
+    items.forEach((it, k) => {
+      const b = document.createElement('button');
+      b.className = 'ltab' + (k === cur ? ' on' : ''); b.textContent = it.title; b.role = 'tab';
+      b.onclick = () => show(k);
+      tabs.appendChild(b);
+    });
+    empty.style.display = items.length ? 'none' : 'grid';
+    frame.style.visibility = items.length ? 'visible' : 'hidden';
+  }
+  function show(k){ cur = k; frame.srcdoc = withBase(items[k].html); paint(); }
+  function setSize(s){
+    size = s;
+    root.style.setProperty('--lensH', s === 'full'
+      ? 'calc(100dvh - var(--barH) - env(safe-area-inset-top,0px) - 64px)' : '52dvh');
+    $('lensSize').setAttribute('aria-label', s === 'full' ? 'Shrink' : 'Expand');
+    $('lensSize').title = s === 'full' ? 'Shrink' : 'Expand';
+    // phones: a taller sheet; wide screens: a wider column with the avatar as a narrow strip
+    document.body.classList.toggle('lens-full', s === 'full' && el.classList.contains('open'));
+  }
+  function open(){
+    setSize(size);
+    el.classList.add('open'); el.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('lens-open'); btn.classList.add('active'); btn.classList.remove('badge');
+    setSize(size);
+  }
+  function close(){
+    el.classList.remove('open'); el.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('lens-open', 'lens-full'); btn.classList.remove('active');
+  }
+  function add(title, html){
+    items.push({ title, html });
+    if (items.length > 8) items.shift();
+    show(items.length - 1); open();
+  }
+
+  btn.onclick = () => el.classList.contains('open') ? close() : open();
+  $('lensClose').onclick = close;
+  $('lensSize').onclick = () => setSize(size === 'full' ? 'half' : 'full');
+
+  // drag the handle: snap to half, full, or closed
+  let drag = null;
+  const grab = $('lensGrab');
+  grab.addEventListener('pointerdown', e => {
+    drag = { y:e.clientY, h:el.getBoundingClientRect().height };
+    el.classList.add('dragging'); document.body.classList.add('lens-drag'); grab.setPointerCapture(e.pointerId);
+  });
+  grab.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const h = Math.max(90, drag.h + (drag.y - e.clientY));
+    root.style.setProperty('--lensH', h + 'px');
+  });
+  const release = () => {
+    if (!drag) return;
+    const h = el.getBoundingClientRect().height, vh = innerHeight;
+    drag = null; el.classList.remove('dragging'); document.body.classList.remove('lens-drag');
+    if (h < vh * 0.26) close();
+    else setSize(h > vh * 0.62 ? 'full' : 'half');
+  };
+  grab.addEventListener('pointerup', release); grab.addEventListener('pointercancel', release);
+
+  paint();
+  return { add, open, close, badge(){ if (!el.classList.contains('open')) btn.classList.add('badge'); } };
+})();
+
+/* ================================================================== *
+ * Tools — fetched from the Lens bridge, which runs your Open WebUI tool
+ * files and hands back their HTML. The model only decides which tool
+ * to call; the panel shows the result untouched.
+ * ================================================================== */
+const tools = (() => {
+  let specs = [];
+  const LOCAL = [
+    { type:'function', function:{ name:'hide_panel', description:'Hide the Lens panel on the user’s screen.', parameters:{ type:'object', properties:{} } } },
+    { type:'function', function:{ name:'show_panel', description:'Reopen the Lens panel on the user’s screen.', parameters:{ type:'object', properties:{} } } }
+  ];
+  const url = path => CFG.lensUrl.replace(/\/$/, '') + path;
+  async function load(loud){
+    specs = [];
+    const st = $('lensStatus');
+    if (CFG.lensOn === 'off'){ st.textContent = 'Tools are off.'; return; }
+    try {
+      const r = await fetch(url('/tools'), { headers:authHeader(CFG.lensKey) });
+      if (!r.ok) throw new Error(r.status === 401 ? 'the key was refused' : 'status ' + r.status);
+      const j = await r.json();
+      specs = j.tools || [];
+      st.textContent = specs.length ? 'Connected: ' + specs.map(t => t.function.name).join(', ') : 'Connected, but no tools were found.';
+    } catch (e){
+      st.textContent = 'Not connected (' + e.message + ').';
+      if (loud) showError('Couldn’t reach the tools server: ' + e.message);
+    }
+  }
+  function list(){ return CFG.lensOn === 'off' || !specs.length ? [] : [...specs, ...LOCAL]; }
+  async function run(tc){
+    const name = tc.function.name;
+    let args = {}; try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+    if (name === 'hide_panel'){ lens.close(); return 'The panel is hidden.'; }
+    if (name === 'show_panel'){ lens.open(); return 'The panel is showing.'; }
+    const r = await fetch(url('/call'), { method:'POST',
+      headers:{ 'Content-Type':'application/json', ...authHeader(CFG.lensKey) },
+      body:JSON.stringify({ name, arguments:args }) });
+    let j = {}; try { j = await r.json(); } catch {}
+    if (!r.ok || !j.ok) return 'Tool error: ' + (j.error || ('status ' + r.status));
+    if (j.html){
+      lens.add(j.title || name.replace(/_/g, ' '), j.html);
+      return (j.text ? j.text.slice(0, 6000) + '\n\n' : '') +
+        'This result is now on the user’s screen in the Lens panel. Do not read its contents aloud; say one short sentence about what is showing.';
+    }
+    return (j.text || 'Done.').slice(0, 8000);
+  }
+  return { load, list, run };
+})();
+tools.load(false);
+
+/* ================================================================== *
+ * Theater — plays videos handed over by a tool panel, full size,
+ * in an ordinary (unsandboxed) frame on this page.
+ * ================================================================== */
+const theater = (() => {
+  const el = $('theater'), frame = $('theaterFrame');
+  function withAutoplay(src){
+    try {
+      const u = new URL(src, location.href);
+      if (!u.searchParams.has('autoplay')) u.searchParams.set('autoplay', '1');
+      if (/youtube/.test(u.hostname)) u.searchParams.set('playsinline', '1');
+      return u.toString();
+    } catch { return src; }
+  }
+  function open(src, title){
+    stopSpeaking();
+    frame.src = withAutoplay(src);
+    $('theaterTitle').textContent = title || '';
+    el.classList.add('on'); el.setAttribute('aria-hidden', 'false');
+  }
+  function close(){
+    el.classList.remove('on'); el.setAttribute('aria-hidden', 'true');
+    frame.src = 'about:blank';                       // stops playback
+  }
+  $('theaterClose').onclick = close;
+  el.addEventListener('click', e => { if (e.target === el) close(); });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && el.classList.contains('on')) close(); });
+  return { open, close };
+})();
+
+/* Messages from the tool panel: videos to play, and Open WebUI-style
+   "ask this" buttons (Open, More results, Chart it…). */
+addEventListener('message', e => {
+  if (e.source !== $('lensFrame').contentWindow) return;
+  const d = e.data || {};
+  if (d.type === 'lens:play' && d.src) theater.open(String(d.src), String(d.title || ''));
+  else if (d.type === 'input:prompt:submit' && d.text){
+    lipsync.unlock(); stopSpeaking();
+    ask(String(d.text).slice(0, 2000));
+  }
+});
+
+setState('idle');
+caption('', 'Press the microphone or the space bar. Hold the space bar to talk for as long as you like.');
+</script>
+</body>
+</html>
