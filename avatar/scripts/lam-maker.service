@@ -1,0 +1,29 @@
+# systemd unit for the avatar maker (avatar_maker.py), which turns photos
+# uploaded on the avatar page into LAM avatars. WSL needs systemd=true under
+# [boot] in /etc/wsl.conf. Edit User, the paths and the conda location, then:
+#
+#   sudo cp avatar/scripts/lam-maker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now lam-maker
+#   journalctl -u lam-maker -f
+
+[Unit]
+Description=LAM avatar maker (:8703)
+After=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/LAM
+# Finished avatars go to avatar/html/avatars next to the script. To also
+# publish them somewhere else (another web server's folder), list every
+# folder, separated by ':'.
+#Environment=AVATAR_DIRS=/home/YOUR_USER/Self-hosted-AI-Stack/avatar/html/avatars:/mnt/c/nginx/html/avatar/avatars
+ExecStart=/home/YOUR_USER/miniconda3/bin/conda run --no-capture-output -n lam \
+    uvicorn avatar_maker:app --app-dir /home/YOUR_USER/Self-hosted-AI-Stack/avatar/scripts \
+    --host 0.0.0.0 --port 8703
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

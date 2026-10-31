@@ -224,6 +224,10 @@
   label.check input{margin-top:2px;accent-color:var(--live)}
   #settings code{font-size:12px;background:var(--panel);padding:1px 5px;border-radius:4px}
   p.note.warn{color:#e8b84b;display:none}
+  #settings input[type=file]{width:100%;color:var(--text);font-size:13px}
+  #makerBar:not([hidden]){display:block;width:100%;height:8px;margin-top:14px;accent-color:var(--live)}
+  #makerStatus.bad{color:#e8b84b}
+  #makerPreview:not([hidden]){display:block;width:128px;border-radius:8px;margin-top:8px}
   body.keys-on #exportKeysNote{display:block}
   .row button:hover{border-color:#3d4a5c}
 
@@ -378,6 +382,20 @@
   <h3>Face</h3>
   <label for="avatarUrl">Avatar — a .glb, or a LAM .zip (blank uses the built-in head)</label>
   <input type="text" id="avatarUrl" placeholder="/avatar/avatar.glb">
+
+  <h3>New avatar from a photo</h3>
+  <p class="note">Your server turns one photo into a LAM face. Use a well-lit, front-facing photo with the whole head in frame. It takes about a minute, and the new face loads when it’s ready.</p>
+  <label for="makerPhoto">Photo</label>
+  <input type="file" id="makerPhoto" accept="image/*">
+  <label for="makerName">Name (letters, digits, - or _)</label>
+  <input type="text" id="makerName" maxlength="40" autocomplete="off" placeholder="alex">
+  <label class="check"><input type="checkbox" id="makerReplace"> Replace an avatar that already has this name</label>
+  <div class="row"><button id="makerGo">Make avatar</button></div>
+  <progress id="makerBar" max="5" value="0" hidden></progress>
+  <p class="note" id="makerStatus"></p>
+  <img id="makerPreview" alt="The face crop the new avatar was made from" hidden>
+  <label for="makerUrl">Avatar maker address</label>
+  <input type="text" id="makerUrl">
   <label for="faceSize">Face size for a LAM face (1 fills the space above the captions)</label>
   <input type="text" id="faceSize" inputmode="decimal">
   <label for="faceRaise">Face height for a LAM face (0 = centred; positive raises it, negative lowers it — try ±0.1)</label>
@@ -444,6 +462,7 @@ const DEFAULTS = {
   endSilence: '1.4',
   followUp: 'question',
   avatarUrl: '',
+  makerUrl: proxied ? new URL('make', location.href).href : 'http://localhost:8703',
   faceSize: '1.0',
   faceRaise: '0',
   mouthGain: '1.0',
@@ -1330,6 +1349,63 @@ const tilt = (() => {
 const lipsync = new LipSync();
 const face = new Face($('stage'));
 face.load(CFG.avatarUrl);
+
+/* ================================================================== *
+ * Avatar maker — upload a photo, the server (avatar_maker.py) runs LAM,
+ * and the finished avatars/<name>.zip becomes this browser's avatar.
+ * ================================================================== */
+(() => {
+  const url = path => CFG.makerUrl.replace(/\/$/, '') + path;
+  const slug = s => s.toLowerCase().replace(/\.[^.]*$/, '').replace(/[^a-z0-9_-]+/g, '-')
+                     .replace(/^[-_]+|[-_]+$/g, '').slice(0, 40);
+  const st = $('makerStatus'), bar = $('makerBar'), btn = $('makerGo'), img = $('makerPreview');
+  const say = (text, bad = false) => { st.textContent = text; st.classList.toggle('bad', bad); };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let busy = false;
+
+  $('makerPhoto').onchange = e => {
+    const f = e.target.files[0];
+    if (f && !$('makerName').value.trim()) $('makerName').value = slug(f.name);
+  };
+
+  btn.onclick = async () => {
+    if (busy) return;
+    const photo = $('makerPhoto').files[0];
+    const name = slug($('makerName').value);
+    if (!photo) return say('Choose a photo first.', true);
+    if (!name) return say('Give the avatar a name.', true);
+    $('makerName').value = name;
+    busy = true; btn.disabled = true; img.hidden = true; bar.hidden = false; bar.value = 0;
+    say('Uploading the photo…');
+    try {
+      const q = '?name=' + encodeURIComponent(name) + '&replace=' + $('makerReplace').checked;
+      const r = await fetch(url('/jobs' + q), { method:'POST',
+        headers:{ 'Content-Type':'application/octet-stream' }, body: photo });
+      let job = {}; try { job = await r.json(); } catch {}
+      if (!r.ok) throw new Error(job.detail || 'status ' + r.status);
+      while (job.state === 'queued' || job.state === 'running'){
+        await sleep(2000);
+        const s = await fetch(url('/jobs/' + job.id));
+        job = await s.json();
+        if (!s.ok) throw new Error(job.detail || 'status ' + s.status);
+        bar.value = job.step;
+        if (job.state === 'queued') say('Waiting for another avatar to finish (' + job.position + ' in line)…');
+        else if (job.state === 'running')
+          say('Step ' + Math.max(1, job.step) + ' of 5: ' + job.message + '… ' + job.elapsed + 's (usually about a minute)');
+      }
+      if (job.state !== 'done') throw new Error(job.error || 'the job stopped');
+      img.src = url('/jobs/' + job.id + '/preview'); img.hidden = false;
+      CFG.avatarUrl = job.avatar; $('avatarUrl').value = job.avatar; saveLocal();
+      face.load(CFG.avatarUrl); face.frameLam();
+      say('Done in ' + job.elapsed + 's. “' + name + '” is now your avatar (' + job.avatar + ').');
+    } catch (e){
+      const msg = e instanceof TypeError ? 'the avatar maker isn’t reachable. Is avatar_maker.py running?' : e.message;
+      say('Couldn’t make the avatar: ' + msg, true);
+    } finally {
+      busy = false; btn.disabled = false; bar.hidden = true;
+    }
+  };
+})();
 
 /* ================================================================== *
  * State + captions

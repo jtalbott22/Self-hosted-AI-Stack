@@ -14,21 +14,23 @@ It is built on **LAM (Large Avatar Model)** and its companion projects from Alib
    ├── tts/v1/audio/speech ────────► Kokoro           (kokoro:8880) reply audio
    ├── a2e/a2e ────────────────────► Audio2Expression (host:8701)   audio → facial expression frames
    ├── stt/v1/audio/transcriptions ► Speaches         (host:8090)   your voice → text
-   └── lens/tools, lens/call ──────► Lens bridge      (host:8095)   notebook tools for the LLM
+   ├── lens/tools, lens/call ──────► Lens bridge      (host:8095)   notebook tools for the LLM
+   └── make/jobs ──────────────────► Avatar maker     (host:8703)   photo → new avatar (optional)
    │
    └── lib/lam-renderer.js + avatars/<name>.zip  → renders and animates the head (WebGL)
 
- Offline, once per face:
-   photo.jpg ──► LAM (conda env `lam`) + Blender ──► output/open_avatar_chat/<name>.zip
+ Once per face, from Setup in the page or from the command line:
+   photo.jpg ──► LAM (conda env `lam`) + Blender ──► avatars/<name>.zip
 ```
 
-There are three parts:
+There are three parts, plus an optional fourth:
 
 | Part | Where it runs | What it does |
 |---|---|---|
 | **LAM** | Host, conda env `lam` | Turns one photo into an animatable Gaussian head and exports a `.zip` bundle. Only needed when you make a new avatar. |
 | **LAM_Audio2Expression (A2E)** | Host, conda env `lam_a2e`, port 8701 | Turns speech audio into the facial expression frames that drive the head. Runs all the time. |
-| **Web app** | `avatar` container, port 8702 | Serves `avatar.html`, the renderer and the bundles, and proxies llama.cpp, Kokoro, Speaches, the Lens bridge and A2E. |
+| **Web app** | `avatar` container, port 8702 | Serves `avatar.html`, the renderer and the bundles, and proxies llama.cpp, Kokoro, Speaches, the Lens bridge, A2E and the avatar maker. |
+| **Avatar maker** *(optional)* | Host, conda env `lam`, port 8703 | Lets you make a new avatar from Setup in the page: upload a photo, and LAM turns it into a bundle in about a minute. See [step 5](#5-make-avatars-from-the-page-optional). |
 
 LAM and A2E compile CUDA extensions against specific versions of PyTorch and CUDA, so they run in conda envs on the host, not in Compose.
 
@@ -300,6 +302,7 @@ When the page is served over http or https, its defaults are paths **relative to
 | `a2e/a2e` | A2E on the host, `:8701` | Lip-sync model (lip-sync mode `a2e`, LAM avatars only) |
 | `stt/v1/audio/transcriptions` | Speaches on the host, `:8090` | Voice input |
 | `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
+| `make/jobs` | Avatar maker on the host, `:8703` | New avatar from a photo (step 5) |
 | `lib/lam-renderer.js` | Served file | LAM renderer (falls back to jsDelivr if missing) |
 | `avatars/<name>.zip` | Served file | Avatar bundles |
 | `avatar-config.json` | Served file, optional | Site-wide settings (below) |
@@ -330,7 +333,55 @@ mkdir -p /mnt/c/nginx/html/avatar
 cp -r avatar/html/* /mnt/c/nginx/html/avatar/
 ```
 
-Because the page calls its services relatively, Windows nginx has to proxy them under the page's folder: `/avatar/llama/` → `127.0.0.1:8000/`, `/avatar/tts/` → `:8880/`, `/avatar/a2e/` → `:8701/`, `/avatar/stt/` → `:8090/`, `/avatar/lens/` → `:8095/`. Use the location blocks in `avatar/nginx-avatar.conf` as a template. Otherwise, set absolute addresses such as `http://localhost:8880/v1` in Setup; the services must then accept cross-origin requests.
+Because the page calls its services relatively, Windows nginx has to proxy them under the page's folder: `/avatar/llama/` → `127.0.0.1:8000/`, `/avatar/tts/` → `:8880/`, `/avatar/a2e/` → `:8701/`, `/avatar/stt/` → `:8090/`, `/avatar/lens/` → `:8095/`, and for the avatar maker `/avatar/make/` → `:8703/` with `client_max_body_size 16m`. Use the location blocks in `avatar/nginx-avatar.conf` as a template. Otherwise, set absolute addresses such as `http://localhost:8880/v1` in Setup; the services must then accept cross-origin requests.
+
+## 5. Make avatars from the page (optional)
+
+With the avatar maker running, **Setup → New avatar from a photo** turns a photo into an avatar without a terminal. Pick a photo, give it a name, and click **Make avatar**. The page shows each step, then the face crop LAM used, and loads the new head as your avatar when it's done. It takes about a minute on an RTX 4070.
+
+The maker is [`scripts/avatar_maker.py`](scripts/avatar_maker.py), a small FastAPI server in the `lam` env. It runs `export_avatar.py` (step 2) for each upload, so finish step 2 and copy `export_avatar.py` into `~/LAM` first. It needs no extra packages.
+
+Run it from the repository root:
+
+```bash
+conda activate lam
+uvicorn avatar_maker:app --app-dir avatar/scripts --host 0.0.0.0 --port 8703
+curl -s http://localhost:8703/health    # {"ok":true,"busy":false,"queued":0}
+```
+
+To start it at boot, edit and install [`scripts/lam-maker.service`](scripts/lam-maker.service) the same way as the A2E unit.
+
+**Settings** (environment variables):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LAM_DIR` | `~/LAM` | LAM repo with `export_avatar.py` |
+| `BLENDER` | `~/software/blender-4.0.2-linux-x64/blender` | Blender 4.x |
+| `AVATAR_DIRS` | `avatar/html/avatars` | Where finished ZIPs go. List several folders separated by `:` to publish to more than one web server. |
+| `MAKER_ALLOW` | `127.0.0.0/8,::1/128,172.16.0.0/12` | Who may call the maker directly. Everyone else gets `403`, so outside users must come through nginx. |
+
+**How it behaves**
+
+- One avatar is made at a time, and up to 3 more wait in line. A photo can be up to 15 MB. Phone photos are turned upright from their EXIF orientation and scaled to at most 2048 px.
+- Names are 1–40 lowercase letters, digits, `-` or `_`. An existing name is refused unless **Replace** is ticked.
+- LAM runs under a temporary name, so it never overwrites anything you exported yourself in `~/LAM/output/`. That temporary output is deleted afterwards.
+- A finished ZIP is checked for `offset.ply`, `skin.glb`, `animation.glb` and `vertex_order.json` before it's published, then written to each folder with an atomic rename. A visitor never loads a half-written file.
+- Errors are explained in the page: no face found, GPU out of memory, a bad file, or a name that's taken. The full LAM log is printed to the maker's output (`journalctl -u lam-maker`).
+
+**API** (what the page calls):
+
+| Request | Response |
+|---|---|
+| `GET /health` | `{"ok": true, "busy": false, "queued": 0}` |
+| `POST /jobs?name=alex&replace=false` with the photo as the raw request body | `202` and the job: `{"id", "name", "state": "queued", "position", ...}` |
+| `GET /jobs/<id>` | `{"state": "queued" \| "running" \| "done" \| "error", "step": 0–5, "steps": 5, "message", "error", "avatar": "avatars/alex.zip", "elapsed"}` |
+| `GET /jobs/<id>/preview` | PNG of the face crop LAM used, once the job is done |
+
+Errors: `400` for a bad name or an empty body, `409` for a name that's taken or already being made, `413` for a photo over 15 MB, `415` for a file that isn't an image, `429` when the line is full. Finished jobs are forgotten after an hour.
+
+**GPU memory.** Making an avatar needs about 4.5 GB of GPU memory on top of whatever else is running. Next to llama.cpp and A2E on a 12 GB card it peaks at about 11.9 GB. On WSL, Windows can move other processes' GPU memory to system RAM to make room, so llama replies may be slow while an avatar is being made. They're back to normal afterwards.
+
+**Who can use it.** Anyone who can open the page can start GPU jobs and add avatars. Keep port 8702 on your LAN, or put the page behind a login.
 
 ## Troubleshooting
 
@@ -348,6 +399,9 @@ Because the page calls its services relatively, Windows nginx has to proxy them 
 | `nvdiffrast_plugin` build error | `rm -rf ~/.cache/torch_extensions/*/nvdiffrast_plugin` and retry with `CC=gcc-12` set |
 | Page loads but the head never moves, or "Lip-sync model unreachable" | Check that `curl http://localhost:8701/health` and `curl http://localhost:8702/a2e/health` both answer, and that `docker logs avatar` shows no 502s on `/a2e/`. On native Linux, A2E must listen on `0.0.0.0`, not `127.0.0.1`, for the container to reach it |
 | Replies or tools fail with 401 | llama or the Lens bridge needs its key. See **API keys** under step 4 |
+| "The avatar maker isn't reachable" | Check that `curl http://localhost:8703/health` and `curl http://localhost:8702/make/health` answer. The maker must listen on `0.0.0.0` for the container to reach it |
+| Maker says `Use the avatar page to make avatars.` (403) | You called port 8703 directly from another machine. Go through the page (port 8702), or add your network to `MAKER_ALLOW` |
+| An avatar made outside the maker is missing `skin.glb` | Blender resolves `--python tools/...` against `$PWD`, not the working directory, and exits 0 when the script is missing. Run `export_avatar.py` from a shell whose `$PWD` is the LAM folder (the maker sets this itself) |
 | Renderer fails to load | Check that `avatar/html/lib/lam-renderer.js` exists and has no `import` lines (`grep -c '^import'` prints 0) |
 
 ## Credits

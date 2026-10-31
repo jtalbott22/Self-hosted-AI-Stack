@@ -582,7 +582,9 @@ docker compose up -d avatar
 # then open http://localhost:8702/avatar.html
 ```
 
-**[avatar/README.md](avatar/README.md)** has the full install: the LAM and Audio2Expression conda envs, the version pins and build fixes they need, Blender export, hosting, troubleshooting, and credits.
+With the optional avatar maker (`avatar/scripts/avatar_maker.py`) running, you can also make new avatars from the page: **Setup → New avatar from a photo** uploads a photo, and LAM turns it into a new head in about a minute.
+
+**[avatar/README.md](avatar/README.md)** has the full install: the LAM and Audio2Expression conda envs, the version pins and build fixes they need, Blender export, the avatar maker, hosting, troubleshooting, and credits.
 
 ## Sparkboard
 
@@ -662,7 +664,7 @@ On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, po
 
 Playwright, Tika, PostgreSQL, Open Terminal, and GitLab MCP do not publish host ports.
 
-The LAM Audio2Expression server runs on the host at port 8701, outside Compose. The `avatar` container reaches it through `host.docker.internal`.
+The LAM Audio2Expression server runs on the host at port 8701, and the optional avatar maker at port 8703, both outside Compose. The `avatar` container reaches it through `host.docker.internal`.
 
 ## Security
 
@@ -711,7 +713,7 @@ Back up important data before making major image or database-version changes.
     ├── README.md            LAM / Audio2Expression install and hosting guide
     ├── nginx-avatar.conf    nginx config for the avatar container
     ├── html/                avatar.html, lib/ (renderer), avatars/ (bundles)
-    └── scripts/             setup-web.sh, lam-a2e.service, export_avatar.py, a2e_server.py
+    └── scripts/             setup-web.sh, export_avatar.py, a2e_server.py, avatar_maker.py, systemd units
 ```
 
 Model weights, generated data, secrets, databases, and other machine-specific state should not be committed to Git.
