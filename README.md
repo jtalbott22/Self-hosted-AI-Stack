@@ -21,6 +21,7 @@ The goal of this repository is not to provide a generic cloud AI server. It is a
 | **Kokoro** | Local text-to-speech |
 | **Open Terminal** | Gives Open WebUI a shell and filesystem interface |
 | **Sparkboard** *(optional)* | Local system, storage, container, and AI activity monitoring |
+| **Avatar** *(optional)* | Talking 3D head in the browser. Built on [LAM](https://github.com/aigc3d/LAM), it uses llama.cpp, Kokoro, and LAM Audio2Expression for lip-sync |
 
 Everything runs through Docker Compose and communicates over the private Compose network unless a port is intentionally published.
 
@@ -50,6 +51,8 @@ Everything runs through Docker Compose and communicates over the private Compose
     Kokoro                → TTS
     Open Terminal         → shell/filesystem
     Sparkboard            → optional local monitoring
+
+  Avatar (optional, localhost:8702) → llama.cpp + Kokoro + LAM Audio2Expression
 ```
 
 ## Hardware expectations
@@ -105,6 +108,37 @@ Use:
 - Docker Engine inside WSL
 
 Docker Desktop is not required for this configuration.
+
+These commands, run inside the WSL Ubuntu shell, install Docker Engine and the NVIDIA Container Toolkit:
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+Close and reopen the WSL shell so the `docker` group membership takes effect, then check GPU access:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
+```
+
+To have the stack come back after a reboot, enable systemd in WSL (`/etc/wsl.conf` needs `systemd=true` under `[boot]`) and start Docker at boot:
+
+```bash
+grep -A1 '\[boot\]' /etc/wsl.conf
+sudo systemctl enable docker containerd
+```
+
+Every service in `docker-compose.yaml` uses `restart: unless-stopped`, so the containers start again with Docker.
 
 ## Install
 
@@ -470,6 +504,23 @@ docker cp openwebui:/app/backend/data/diagrams ./diagrams
 
 The model writes all of the SVG itself, so output quality depends on the model. The skill's references are long: the guide is about 6k tokens, and a type reference plus its example is another 2–8k, so give the model a context window of at least 32k. If context is tight, lower the `MAX_EXAMPLE_CHARS` valve.
 
+## Avatar
+
+`avatar/` is an optional browser app with a talking 3D head. The head is made from one photo with [LAM (Large Avatar Model)](https://github.com/aigc3d/LAM) from Alibaba's Tongyi Lab. The local LLM writes the reply, Kokoro speaks it, and [LAM_Audio2Expression](https://github.com/aigc3d/LAM_Audio2Expression) turns the audio into lip-sync in real time.
+
+The `avatar` service in `docker-compose.yaml` is an nginx container on port **8702**. It serves `avatar/html/` and proxies llama.cpp, Kokoro, and the Audio2Expression server under one origin, so the page needs no CORS setup. LAM and Audio2Expression themselves run in conda envs on the host, because they compile CUDA extensions against pinned PyTorch and CUDA versions.
+
+Short version, once the conda setup is done:
+
+```bash
+bash avatar/scripts/setup-web.sh ~/LAM/output/open_avatar_chat/<name>.zip
+cp /path/to/avatar.html avatar/html/
+docker compose up -d avatar
+# then open http://localhost:8702/avatar.html
+```
+
+**[avatar/README.md](avatar/README.md)** has the full install: the LAM and Audio2Expression conda envs, the version pins and build fixes they need, Blender export, hosting, troubleshooting, and credits.
+
 ## Sparkboard
 
 Sparkboard is an optional monitoring component included as a local project under:
@@ -525,6 +576,7 @@ For each container, Sparkboard tracks CPU %, memory (absolute and % of host), an
 | jupyter | 8888→8888 |
 | searxng | 8080→8080 |
 | sparkboard | 9102→9102 |
+| avatar | 8702→80 |
 | tika, playwright, postgres, open-terminal | not published |
 
 On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, power draw, and SM/memory clocks over time, plus a per-core CPU load breakdown and network/disk throughput history.
@@ -542,9 +594,12 @@ On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, po
 | 8188 | ComfyUI | Image generation UI |
 | 8880 | Kokoro | TTS API |
 | 8888 | Jupyter | Notebook/code environment |
+| 8702 | Avatar | Avatar web app *(optional)* |
 | 9102 | Sparkboard | Monitoring dashboard |
 
 Playwright, Tika, PostgreSQL, and Open Terminal do not publish host ports.
+
+The LAM Audio2Expression server runs on the host at port 8701, outside Compose. The `avatar` container reaches it through `host.docker.internal`.
 
 ## Security
 
@@ -586,7 +641,12 @@ Back up important data before making major image or database-version changes.
 ├── comfy-models/
 ├── notebooks/
 ├── searxng/
-└── sparkboard/
+├── sparkboard/
+└── avatar/
+    ├── README.md            LAM / Audio2Expression install and hosting guide
+    ├── nginx-avatar.conf    nginx config for the avatar container
+    ├── html/                avatar.html, lib/ (renderer), avatars/ (bundles)
+    └── scripts/             setup-web.sh, lam-a2e.service
 ```
 
 Model weights, generated data, secrets, databases, and other machine-specific state should not be committed to Git.

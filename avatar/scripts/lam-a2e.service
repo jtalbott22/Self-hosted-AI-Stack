@@ -1,0 +1,23 @@
+# systemd unit for the LAM_Audio2Expression server (WSL with systemd=true, or
+# native Linux). Edit User, the paths and the conda location, then:
+#
+#   sudo cp avatar/scripts/lam-a2e.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now lam-a2e
+#   journalctl -u lam-a2e -f
+
+[Unit]
+Description=LAM Audio2Expression server (:8701)
+After=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/LAM_Audio2Expression
+ExecStart=/home/YOUR_USER/miniconda3/bin/conda run --no-capture-output -n lam_a2e \
+    uvicorn a2e_server:app --host 0.0.0.0 --port 8701
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
