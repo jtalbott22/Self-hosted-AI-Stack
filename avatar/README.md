@@ -303,11 +303,12 @@ When the page is served over http or https, its defaults are paths **relative to
 | `stt/v1/audio/transcriptions` | Speaches on the host, `:8090` | Voice input |
 | `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
 | `make/jobs` | Avatar maker on the host, `:8703` | New avatar from a photo (step 5) |
+| `music/search`, `music/stream/...` | Music service, `music:8000` | Songs, radio and podcasts (step 6) |
 | `lib/lam-renderer.js` | Served file | LAM renderer (falls back to jsDelivr if missing) |
 | `avatars/<name>.zip` | Served file | Avatar bundles |
 | `avatar-config.json` | Served file, optional | Site-wide settings (below) |
 
-Opened as a local file, the page calls the ports directly instead (`http://localhost:8000/v1`, `:8880`, `:8701`, `:8090`, `:8095`). Every address can also be changed in Setup. If A2E is down, the page falls back to word-timing lip-sync, so speech still works.
+Opened as a local file, the page calls the ports directly instead (`http://localhost:8000/v1`, `:8880`, `:8701`, `:8090`, `:8095`, `:8703`, `:8704`). Every address can also be changed in Setup. If A2E is down, the page falls back to word-timing lip-sync, so speech still works.
 
 **API keys.** If llama runs with `LLAMA_API_KEY`, or the Lens bridge with `LENS_BRIDGE_KEY`, requests without the key get `401`. Either enter the keys in Setup (they stay in that browser), or set them on the server with `proxy_set_header Authorization "Bearer ...";` in the `/llama/` or `/lens/` block of `avatar/nginx-avatar.conf`. With the second option, anyone who can reach port 8702 can use them.
 
@@ -383,6 +384,34 @@ Errors: `400` for a bad name or an empty body, `409` for a name that's taken or 
 
 **Who can use it.** Anyone who can open the page can start GPU jobs and add avatars. Keep port 8702 on your LAN, or put the page behind a login.
 
+## 6. Music, radio and podcasts (optional)
+
+The `music` service in `docker-compose.yaml` (`avatar/music/`) lets you ask the avatar to play something: "play some Fleetwood Mac", "put on KEXP", "play the latest Radiolab". Neither the service nor the page needs an account or an API key.
+
+```bash
+docker compose up -d --build music
+curl http://localhost:8702/music/health     # through the avatar container
+```
+
+| Ask for | Source | What plays |
+|---|---|---|
+| A song, artist, album, genre or mood | YouTube, through [yt-dlp](https://github.com/yt-dlp/yt-dlp) | The best match, then up to 25 related songs from its YouTube mix |
+| A radio station by name, call letters, genre or city | [radio-browser.info](https://www.radio-browser.info/) | The live stream |
+| A podcast | Apple's podcast search, then the show's RSS feed | The newest episode, or the one whose title matches what you asked for |
+
+The model gets two tools, `play_music` and `music_control` (pause, resume, next, previous, stop, what's playing). They're built into the page, so they work without the Lens bridge. **Setup → Music** turns them off or points them at another server.
+
+**How it plays.**
+- **Pausing and resuming.** Music pauses while the mic is open and while the avatar thinks or speaks, then picks up again when the exchange is over.
+- **Controls.** A card under the status pill shows what's playing, with play/pause, next and stop buttons. The same controls work from the lock screen, the car's Now Playing screen and steering-wheel buttons.
+- **Same-origin audio.** All audio goes through the service at `music/stream/...`, so the page can play plain-http radio and YouTube audio, which only plays for the address that asked for it. `/stream` only serves results from a recent search; it won't fetch an arbitrary URL.
+- **Song cache.** Songs are downloaded whole, repaired with ffmpeg so iPhones can seek in them, and cached in the `music-cache` volume. The cache is capped at `CACHE_GB`, 2 GB by default.
+- **Start-up time.** The first song starts a few seconds after the search, while the avatar is still talking. The next song downloads in the background while the current one plays.
+
+**iPhone and CarPlay.** iOS lets a page start sound only after a tap. Tapping the mic once covers that, and after it the model can start music by voice. Music keeps playing with the screen locked. To stop the end of each reply getting cut off in the car, set **Setup → Listening → Speakers** to **Car** (see Troubleshooting).
+
+**When YouTube changes.** yt-dlp needs regular updates to keep up with YouTube. If songs stop playing but radio and podcasts still work, rebuild the image to get the newest yt-dlp: `docker compose build --no-cache music && docker compose up -d music`.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -403,6 +432,10 @@ Errors: `400` for a bad name or an empty body, `409` for a name that's taken or 
 | Maker says `Use the avatar page to make avatars.` (403) | You called port 8703 directly from another machine. Go through the page (port 8702), or add your network to `MAKER_ALLOW` |
 | The same 403, or a 502, only through a CDN or reverse proxy (CloudFront, Cloudflare) | Start uvicorn with `--no-proxy-headers`, as the unit does. Without it, uvicorn trusts `X-Forwarded-For` from a proxy on `127.0.0.1`, and behind a CDN that header holds the visitor's public address, which the maker refuses |
 | An avatar made outside the maker is missing `skin.glb` | Blender resolves `--python tools/...` against `$PWD`, not the working directory, and exits 0 when the script is missing. Run `export_avatar.py` from a shell whose `$PWD` is the LAM folder (the maker sets this itself) |
+| The end of a reply is cut off before the mic opens again, in the car or on Bluetooth | Set **Setup → Listening → Speakers** to **Car** or **Bluetooth**. Wireless audio reaches the speakers a second or more after the page sends it, and opening the mic switches the phone's audio route, which drops whatever is still on its way |
+| "The music service isn't reachable" | `curl http://localhost:8702/music/health`. If that fails, `docker compose up -d --build music` and check `docker logs music` |
+| Radio and podcasts play but songs don't ("YouTube wouldn't play that") | Update yt-dlp: `docker compose build --no-cache music && docker compose up -d music` |
+| Music won't start on an iPhone until you tap ▶ | iOS needs one tap on the page first. Tap the mic or ▶ once and voice requests work from then on |
 | Renderer fails to load | Check that `avatar/html/lib/lam-renderer.js` exists and has no `import` lines (`grep -c '^import'` prints 0) |
 
 ## Credits

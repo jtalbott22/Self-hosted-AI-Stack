@@ -582,7 +582,7 @@ docker compose up -d avatar
 # then open http://localhost:8702/avatar.html
 ```
 
-With the optional avatar maker (`avatar/scripts/avatar_maker.py`) running, you can also make new avatars from the page: **Setup → New avatar from a photo** uploads a photo, and LAM turns it into a new head in about a minute.
+With the optional avatar maker (`avatar/scripts/avatar_maker.py`) running, you can also make new avatars from the page: **Setup → New avatar from a photo** uploads a photo, and LAM turns it into a new head in about a minute. With the `music` service running, you can also ask the avatar to play songs (YouTube), live radio stations or podcasts. Neither the service nor the page needs an account or an API key.
 
 **[avatar/README.md](avatar/README.md)** has the full install: the LAM and Audio2Expression conda envs, the version pins and build fixes they need, Blender export, the avatar maker, hosting, troubleshooting, and credits.
 
@@ -642,6 +642,7 @@ For each container, Sparkboard tracks CPU %, memory (absolute and % of host), an
 | searxng | 8080→8080 |
 | sparkboard | 9102→9102 |
 | avatar | 8702→80 |
+| music | 127.0.0.1:8704→8000 (for an nginx outside Compose) |
 | tika, playwright, postgres, open-terminal, gitlab-mcp | not published |
 
 On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, power draw, and SM/memory clocks over time, plus a per-core CPU load breakdown and network/disk throughput history.
@@ -713,6 +714,7 @@ Back up important data before making major image or database-version changes.
     ├── README.md            LAM / Audio2Expression install and hosting guide
     ├── nginx-avatar.conf    nginx config for the avatar container
     ├── html/                avatar.html, lib/ (renderer), avatars/ (bundles)
+    ├── music/               music service: YouTube, radio and podcast search and streaming
     └── scripts/             setup-web.sh, export_avatar.py, a2e_server.py, avatar_maker.py, systemd units
 ```
 

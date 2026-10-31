@@ -246,6 +246,26 @@
     background:rgba(20,26,35,.62);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
     font-size:14px;color:var(--text)}
   #callBar.on{display:flex}
+
+  /* ---- now playing: music, radio or a podcast ---- */
+  #music{position:fixed;z-index:3;top:calc(env(safe-area-inset-top,0px) + 58px);left:14px;
+    display:none;align-items:center;gap:10px;padding:6px;border-radius:14px;
+    width:min(340px, calc(100vw - var(--stageR) - 28px));
+    background:rgba(20,26,35,.62);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.06);transition:width .34s var(--ease)}
+  #music.on{display:flex}
+  #musicArt{width:40px;height:40px;border-radius:9px;object-fit:cover;background:var(--panel);flex:0 0 auto}
+  #music .txt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  #music .txt b{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #music .txt span{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #music button{flex:0 0 auto;width:34px;height:34px;border-radius:50%;border:0;padding:0;display:grid;place-items:center;
+    background:none;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent}
+  #music button:active{background:rgba(255,255,255,.08)}
+  #music button:focus-visible{outline:2px solid var(--live);outline-offset:1px}
+  #music svg{width:18px;height:18px;fill:currentColor;stroke:none}
+  #music svg.line{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+  #musicPlay .pause{display:none} #music.playing #musicPlay .play{display:none} #music.playing #musicPlay .pause{display:inline}
+  #music.live #musicNext{display:none}
   #callBar .t{color:var(--dim);font-variant-numeric:tabular-nums}
   #err{position:fixed;top:14px;left:calc((100vw - var(--stageR)) / 2);transform:translateX(-50%);
     background:#2a1719;border:1px solid #5a2b2b;color:#ffb9b3;
@@ -277,6 +297,15 @@
     <svg class="off" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
   </button>
 </div>
+
+<div id="music" role="region" aria-label="Now playing">
+  <img id="musicArt" alt="" referrerpolicy="no-referrer">
+  <div class="txt"><b id="musicTitle"></b><span id="musicSub"></span></div>
+  <button id="musicPlay" type="button" aria-label="Play or pause"><svg class="play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg><svg class="pause" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg></button>
+  <button id="musicNext" type="button" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M5.5 5.5v13l9-6.5zM16 5.5h2.5v13H16z"/></svg></button>
+  <button id="musicStop" type="button" aria-label="Stop"><svg class="line" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+</div>
+<audio id="musicEl" playsinline preload="auto"></audio>
 
 <section id="lens" aria-label="Lens" aria-hidden="true">
   <div class="grab" id="lensGrab"><span></span></div>
@@ -368,6 +397,13 @@
     <option value="always">Always (hands-free conversation)</option>
     <option value="off">Never</option>
   </select>
+  <label for="speakerDelay">Speakers</label>
+  <select id="speakerDelay">
+    <option value="0.4">Phone or computer speakers</option>
+    <option value="1">Bluetooth headphones or speaker</option>
+    <option value="2">Car (CarPlay, Android Auto, Bluetooth)</option>
+  </select>
+  <p class="note">Wireless speakers play sound a second or more after the page sends it. This is how long it waits after the last word before listening again, so the end of a reply isn’t cut off.</p>
 
   <h3>Tools</h3>
   <p class="note">Your Open WebUI tools, run through the Lens bridge. Results open in the Lens panel.</p>
@@ -378,6 +414,13 @@
   <label for="lensKey">Tools server key</label>
   <input type="password" id="lensKey" autocomplete="off">
   <p class="note" id="lensStatus"></p>
+
+  <h3>Music</h3>
+  <p class="note">Ask for a song, an artist, a radio station or a podcast. Songs come from YouTube and keep going with related songs.</p>
+  <label for="musicOn">Music</label>
+  <select id="musicOn"><option value="on">On</option><option value="off">Off</option></select>
+  <label for="musicUrl">Music server address</label>
+  <input type="text" id="musicUrl">
 
   <h3>Face</h3>
   <label for="avatarUrl">Avatar — a .glb, or a LAM .zip (blank uses the built-in head)</label>
@@ -461,6 +504,7 @@ const DEFAULTS = {
   sttKey  : '',
   endSilence: '1.4',
   followUp: 'question',
+  speakerDelay: '0.4',
   avatarUrl: '',
   makerUrl: proxied ? new URL('make', location.href).href : 'http://localhost:8703',
   faceSize: '1.0',
@@ -472,6 +516,8 @@ const DEFAULTS = {
   lensOn: 'on',
   lensUrl: proxied ? new URL('lens', location.href).href : 'http://localhost:8095',
   lensKey: '',
+  musicOn: 'on',
+  musicUrl: proxied ? new URL('music', location.href).href : 'http://localhost:8704',
   callNameInput: 'Avatar',
   sysPrompt: 'You are a local voice assistant. Your replies are spoken aloud, so keep them short and conversational — usually one to three sentences. No markdown, no lists, no code blocks, no emoji. If something needs length, offer the short version first.'
 };
@@ -668,9 +714,11 @@ const keepAlive = (() => {
     for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
     return URL.createObjectURL(new Blob([b], { type:'audio/wav' }));
   }
+  let wav = null;
   return {
+    url(){ return wav || (wav = silentWav()); },
     start(){
-      if (!el){ el = new Audio(silentWav()); el.loop = true; el.setAttribute('playsinline', ''); }
+      if (!el){ el = new Audio(this.url()); el.loop = true; el.setAttribute('playsinline', ''); }
       if (el.paused) el.play().catch(() => {});
     }
   };
@@ -706,6 +754,7 @@ class LipSync {
   unlock(){
     if (state !== 'listening') setSession('playback');
     keepAlive.start();
+    music.prime();
     const ctx = this.ensure();
     if (ctx.state !== 'running') ctx.resume();
     try {
@@ -1418,6 +1467,7 @@ function setState(s){
   $('stateLabel').textContent = { idle:'Idle', listening:'Listening', transcribing:'Transcribing',
                                   thinking:'Thinking', working:'Working', speaking:'Speaking' }[s];
   $('talk').classList.toggle('hot', s === 'listening');
+  music.onState(s);
 }
 const esc = s => (s || '').replace(/[&<>]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]));
 /* Markdown the model slips in anyway reads badly as a caption; keep the line breaks, drop the symbols. */
@@ -1638,6 +1688,7 @@ function startBrowserListening(auto){
 
 function startListening(auto){
   stopSpeaking();
+  music.onState('listening');                          // quiet before the mic opens, not after
   if (CFG.sttMode === 'browser') startBrowserListening(!!auto); else startServerListening(!!auto);
 }
 
@@ -1669,25 +1720,39 @@ let streaming = false;
    (or the setting is "always"), open the mic again once the avatar has
    finished speaking. Only for turns you spoke — if you typed, it waits. */
 let followUp = -1;                                     // the generation that should be answered
+let listenSoon = false;                                // a follow-up listen is about to open
+const speakerDelayMs = () => 1000 * Math.max(0.2, parseFloat(CFG.speakerDelay) || 0.4);
 const endsWithQuestion = s => /\?["'”’)\]]*$/.test(plainReply(s).trim());
 function settle(){
   // back to idle once nothing is streaming, queued, or playing
   if (!streaming && !draining && !speaking && !queue.length &&
       (state === 'thinking' || state === 'working' || state === 'speaking')){
+    // Music waits while a follow-up listen is coming, instead of starting and stopping again.
+    const listen = followUp === generation && !music.active();
+    if (followUp === generation) followUp = -1;
+    listenSoon = listen;
     setState('idle');
-    if (followUp === generation){
-      followUp = -1;
+    if (listen){
       const g = generation;
-      setTimeout(() => {                                 // let the last syllable clear the room first
-        if (g !== generation || state !== 'idle' || rec) return;
-        if ($('theater').classList.contains('on') || $('settings').classList.contains('open')) return;
+      // Let the last syllable reach the speakers first. Over Bluetooth or
+      // CarPlay that's a second or more after the page has finished sending
+      // it, and opening the mic switches the audio route, which cuts off
+      // whatever is still on its way.
+      setTimeout(() => {
+        listenSoon = false;
+        if (g !== generation || state !== 'idle' || rec ||
+            $('theater').classList.contains('on') || $('settings').classList.contains('open')){
+          music.onState(state); return;
+        }
         startListening(true);
-      }, 350);
+      }, speakerDelayMs());
     }
   }
 }
 
 const TOOL_PROMPT = ' You can use tools. When a tool result is shown on screen, it is already in front of the user in the Lens panel: never read its contents, numbers, or tables aloud — say one short sentence about what is showing. Before anything slow or with side effects, such as running a notebook, ask out loud and wait for a yes. You can hide or reopen the panel with hide_panel and show_panel.';
+
+const MUSIC_PROMPT = ' You can play songs, artists, genres, live radio stations and podcasts with play_music, and pause, resume, skip or stop them with music_control. When you start something, say only a few words, such as "Here\u2019s Bohemian Rhapsody." It starts as soon as you stop talking. Music pauses while the user talks to you and picks back up afterwards, so never stop it just because they spoke.';
 
 /* Keep the context short, and never start it in the middle of a tool exchange. */
 function recentHistory(){
@@ -1700,7 +1765,7 @@ function recentHistory(){
 async function streamTurn(gen, onText){
   const list = tools.list();
   const body = { model:CFG.llmModel, stream:true,
-    messages:[{ role:'system', content:CFG.sysPrompt + (list.length ? TOOL_PROMPT : '') }, ...recentHistory()] };
+    messages:[{ role:'system', content:CFG.sysPrompt + (tools.lensReady() ? TOOL_PROMPT : '') + (music.enabled() ? MUSIC_PROMPT : '') }, ...recentHistory()] };
   if (list.length){ body.tools = list; body.tool_choice = 'auto'; }
   if (CFG.thinking === 'off') body.chat_template_kwargs = { enable_thinking:false };
   const res = await fetch(CFG.llmBase.replace(/\/$/, '') + '/chat/completions', {
@@ -2163,6 +2228,191 @@ const lens = (() => {
 })();
 
 /* ================================================================== *
+ * Music — songs (YouTube), live radio and podcasts from the music
+ * service (avatar/music), played in an <audio> element so it keeps going
+ * with the screen locked and shows up on the car's Now Playing screen.
+ *  - It pauses whenever the avatar listens, thinks or speaks, and picks
+ *    up again when the exchange is over.
+ *  - iOS only lets an element start sound inside a tap, so the element is
+ *    "primed" on the first tap; after that the model can start music.
+ * ================================================================== */
+const music = (() => {
+  const el = $('musicEl'), card = $('music');
+  let queue = [], idx = -1, want = false, held = false, primed = false;
+  let failures = 0, pausedAt = 0, resumeT = 0;
+  const base = () => CFG.musicUrl.replace(/\/$/, '');
+  const cur = () => queue[idx] || null;
+  const enabled = () => CFG.musicOn !== 'off';
+
+  function prime(){
+    if (primed || el.getAttribute('src')) return;
+    primed = true;
+    el.src = keepAlive.url();
+    el.play().then(() => el.pause()).catch(() => { primed = false; });
+  }
+
+  function paint(){
+    const it = cur();
+    card.classList.toggle('on', !!it);
+    if (!it){ card.classList.remove('playing', 'live'); return; }
+    $('musicTitle').textContent = it.title;
+    $('musicSub').textContent = it.subtitle || { music:'YouTube', radio:'Live radio', podcast:'Podcast' }[it.kind] || '';
+    const art = $('musicArt');
+    if (it.art){ if (art.getAttribute('src') !== it.art) art.src = it.art; art.style.visibility = ''; }
+    else { art.removeAttribute('src'); art.style.visibility = 'hidden'; }
+    card.classList.toggle('playing', want);
+    card.classList.toggle('live', !!it.live || idx >= queue.length - 1);
+    const ms = navigator.mediaSession;
+    if (ms){
+      try {
+        ms.metadata = new MediaMetadata({ title: it.title, artist: it.subtitle || '',
+          album: { music:'YouTube', radio:'Live radio', podcast:'Podcast' }[it.kind] || '',
+          artwork: it.art ? [{ src: it.art, sizes:'512x512' }] : [] });
+        ms.playbackState = want ? 'playing' : 'paused';
+      } catch {}
+    }
+  }
+
+  function load(i){
+    idx = i;
+    const it = cur(); if (!it) return;
+    el.src = new URL(it.url, base() + '/').href;
+    el.load();
+    paint();
+    // The next song downloads while this one plays, so it starts without a wait.
+    const nx = queue[idx + 1];
+    if (nx && nx.kind === 'music')
+      fetch(base() + '/prefetch/' + nx.url.split('/').pop(), { method:'POST' }).catch(() => {});
+  }
+
+  /* Plays when nothing else is going on; otherwise it starts once the avatar is done. */
+  function go(){
+    clearTimeout(resumeT);
+    if (!want || !cur() || held) return;
+    const it = cur();
+    if (it.live && pausedAt && Date.now() - pausedAt > 10000) el.src = el.src;   // rejoin the live stream
+    pausedAt = 0;
+    el.play().catch(e => {
+      if (e.name === 'NotAllowedError'){
+        want = false; paint();
+        caption('', 'Tap ▶ at the top to start the music. Your browser wants a tap first.');
+      }
+    });
+  }
+  function hush(){ if (!el.paused){ el.pause(); pausedAt = Date.now(); } }
+
+  function onState(s){
+    held = s !== 'idle';
+    if (held){ clearTimeout(resumeT); hush(); return; }
+    if (listenSoon) return;                           // a follow-up listen is about to open
+    clearTimeout(resumeT);
+    resumeT = setTimeout(() => { if (state === 'idle' && !rec) go(); }, 300);
+  }
+
+  function play(items){
+    queue = items; failures = 0; want = true;
+    load(0);
+    if (state === 'idle') go();
+  }
+  function next(step = 1){
+    const i = idx + step;
+    if (i < 0 || i >= queue.length) return false;
+    load(i); if (want) go();
+    return true;
+  }
+  function pause(){ want = false; hush(); paint(); }
+  function resume(){ if (!cur()) return false; want = true; paint(); go(); return true; }
+  function stop(){
+    want = false; queue = []; idx = -1;
+    el.pause(); el.removeAttribute('src'); el.load();
+    paint();
+    if (navigator.mediaSession){ try { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch {} }
+  }
+
+  el.addEventListener('playing', () => { failures = 0; });
+  el.addEventListener('ended', () => {
+    const it = cur();
+    if (!it || el.src === keepAlive.url()) return;
+    if (!(it.kind === 'music' && next())) { want = false; paint(); }
+  });
+  el.addEventListener('error', () => {
+    const it = cur();
+    if (!it || !el.getAttribute('src') || el.src === keepAlive.url()) return;
+    if (it.kind === 'music' && ++failures < 4 && next()) return;   // skip a song that won't play
+    want = false; paint();
+    showError('Couldn’t play “' + it.title + '”. ' + (it.live ? 'The station may be offline.' : 'Is the music service running?'));
+  });
+
+  // The car's or lock screen's buttons, and the card's.
+  const ms = navigator.mediaSession;
+  if (ms){
+    const on = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };
+    on('play', () => resume());
+    on('pause', () => pause());
+    on('stop', () => stop());
+    on('nexttrack', () => next());
+    on('previoustrack', () => { if (el.currentTime > 5) el.currentTime = 0; else next(-1); });
+  }
+  $('musicPlay').onclick = () => { lipsync.unlock(); want ? pause() : resume(); };
+  $('musicNext').onclick = () => { lipsync.unlock(); next(); };
+  $('musicStop').onclick = () => stop();
+
+  /* ---- what the model can call ---- */
+  const TOOLS = [
+    { type:'function', function:{ name:'play_music',
+      description:'Play something for the user right away, through this page. kind "music": songs, artists, albums, genres or moods, from YouTube; it keeps going with related songs. kind "radio": a live internet radio station, by name, call letters, genre or city. kind "podcast": a podcast show; plays its newest episode unless episode says which one.',
+      parameters:{ type:'object', properties:{
+        query:{ type:'string', description:'What to search for, e.g. "Bohemian Rhapsody Queen", "KEXP", "smooth jazz", "Radiolab".' },
+        kind:{ type:'string', enum:['music', 'radio', 'podcast'] },
+        episode:{ type:'string', description:'For podcasts only: words from the episode title, or blank for the newest.' } },
+        required:['query'] } } },
+    { type:'function', function:{ name:'music_control',
+      description:'Control what is playing: pause, resume, skip to the next or previous song, stop, or find out what is playing.',
+      parameters:{ type:'object', properties:{
+        action:{ type:'string', enum:['pause', 'resume', 'next', 'previous', 'stop', 'status'] } },
+        required:['action'] } } }
+  ];
+  const describe = it => '“' + it.title + '”' + (it.subtitle ? ' (' + it.subtitle + ')' : '');
+
+  async function run(name, args){
+    if (name === 'music_control'){
+      const a = args.action;
+      if (!cur()) return 'Nothing is playing.';
+      if (a === 'pause'){ pause(); return 'Paused.'; }
+      if (a === 'resume'){ resume(); return 'Resumed ' + describe(cur()) + '.'; }
+      if (a === 'stop'){ stop(); return 'Stopped.'; }
+      if (a === 'next' || a === 'previous'){
+        if (cur().live) return 'This is a live radio station; there is no next track. Offer to find another station.';
+        want = true;
+        return next(a === 'next' ? 1 : -1) ? 'Now playing ' + describe(cur()) + '.' : 'There is nothing ' + (a === 'next' ? 'after' : 'before') + ' this one.';
+      }
+      return (want ? 'Playing ' : 'Paused on ') + describe(cur()) + '.' +
+        (queue[idx + 1] && !cur().live ? ' Up next: ' + describe(queue[idx + 1]) + '.' : '');
+    }
+    const kind = ['music', 'radio', 'podcast'].includes(args.kind) ? args.kind : 'music';
+    const q = String(args.query || '').trim();
+    if (!q) return 'Ask the user what to play.';
+    const u = base() + '/search?' + new URLSearchParams({ q, kind, episode: args.episode || '' });
+    let j;
+    try {
+      const r = await fetch(u);
+      j = await r.json().catch(() => ({}));
+      if (!r.ok) return 'Music search failed: ' + (j.detail || ('status ' + r.status));
+    } catch { return 'The music service isn’t reachable. Tell the user it may not be running.'; }
+    const items = j.items || [];
+    if (!items.length) return 'Nothing found for "' + q + '" (' + kind + '). Suggest a different search.';
+    play(items);
+    const it = items[0];
+    const more = kind === 'music' && items.length > 1 ? ' ' + (items.length - 1) + ' related songs follow.' : '';
+    return 'Now playing ' + describe(it) + '.' + more +
+      ' It starts the moment you stop talking, so reply with just a few words. Do not list or read out details.';
+  }
+
+  return { prime, onState, pause, enabled, active: () => want && !!cur(),
+           tools: () => enabled() ? TOOLS : [], handles: n => n === 'play_music' || n === 'music_control', run };
+})();
+
+/* ================================================================== *
  * Tools — fetched from the Lens bridge, which runs your Open WebUI tool
  * files and hands back their HTML. The model only decides which tool
  * to call; the panel shows the result untouched.
@@ -2189,10 +2439,12 @@ const tools = (() => {
       if (loud) showError('Couldn’t reach the tools server: ' + e.message);
     }
   }
-  function list(){ return CFG.lensOn === 'off' || !specs.length ? [] : [...specs, ...LOCAL]; }
+  const lensReady = () => CFG.lensOn !== 'off' && specs.length > 0;
+  function list(){ return [...(lensReady() ? [...specs, ...LOCAL] : []), ...music.tools()]; }
   async function run(tc){
     const name = tc.function.name;
     let args = {}; try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
+    if (music.handles(name)) return music.run(name, args);
     if (name === 'hide_panel'){ lens.close(); return 'The panel is hidden.'; }
     if (name === 'show_panel'){ lens.open(); return 'The panel is showing.'; }
     const r = await fetch(url('/call'), { method:'POST',
@@ -2207,7 +2459,7 @@ const tools = (() => {
     }
     return (j.text || 'Done.').slice(0, 8000);
   }
-  return { load, list, run };
+  return { load, list, run, lensReady };
 })();
 tools.load(false);
 
@@ -2226,7 +2478,7 @@ const theater = (() => {
     } catch { return src; }
   }
   function open(src, title){
-    stopSpeaking();
+    stopSpeaking(); music.pause();
     frame.src = withAutoplay(src);
     $('theaterTitle').textContent = title || '';
     el.classList.add('on'); el.setAttribute('aria-hidden', 'false');

@@ -140,8 +140,8 @@ services:
   # ----------------------------------------------------------------
   # Avatar is optional. It serves avatar/html (Avatar.html, the LAM web
   # renderer and exported avatar bundles) and proxies llama.cpp, Kokoro,
-  # Speaches, the Lens bridge and the host-side LAM Audio2Expression server
-  # under one origin.
+  # Speaches, the Lens bridge, the music service and the host-side LAM
+  # Audio2Expression server under one origin.
   # See avatar/README.md. Remove this service if you don't use it.
   avatar:
     image: nginx:1.27-alpine
@@ -158,6 +158,21 @@ services:
     depends_on:
       kokoro:
         condition: service_started
+    restart: unless-stopped
+
+  # Music for the avatar page: songs (YouTube via yt-dlp), live radio
+  # (radio-browser.info) and podcasts (Apple's podcast search + RSS). No
+  # accounts or keys. The avatar container reaches it as music:8000 at
+  # /music/. The localhost port is only for an nginx outside Compose; drop it
+  # if you only use port 8702. Remove this service if you don't want music.
+  music:
+    build: ./avatar/music
+    container_name: music
+    ports: ["127.0.0.1:8704:8000"]
+    volumes:
+      - music-cache:/cache        # downloaded songs, capped at CACHE_GB
+    environment:
+      - CACHE_GB=2
     restart: unless-stopped
   # ----------------------------------------------------------------
 
@@ -325,3 +340,4 @@ volumes:
   pgdata:
   open-terminal:
   sparkboard-data:
+  music-cache:
