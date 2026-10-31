@@ -3,7 +3,7 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 # yt-dlp needs a JavaScript runtime (deno) to read YouTube's player; the deno
 # wheel ships the binary.
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]" httpx "yt-dlp[default]" deno
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" httpx numpy "yt-dlp[default]" deno
 WORKDIR /app
 COPY music.py .
 ENV CACHE_DIR=/cache CACHE_GB=2

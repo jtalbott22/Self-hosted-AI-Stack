@@ -303,7 +303,7 @@ When the page is served over http or https, its defaults are paths **relative to
 | `stt/v1/audio/transcriptions` | Speaches on the host, `:8090` | Voice input |
 | `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
 | `make/jobs` | Avatar maker on the host, `:8703` | New avatar from a photo (step 5) |
-| `music/search`, `music/stream/...` | Music service, `music:8000` | Songs, radio and podcasts (step 6) |
+| `music/search`, `music/stream/...`, `music/levels/...` | Music service, `music:8000` | Songs, radio and podcasts, and the visualizer (step 6) |
 | `lib/lam-renderer.js` | Served file | LAM renderer (falls back to jsDelivr if missing) |
 | `avatars/<name>.zip` | Served file | Avatar bundles |
 | `avatar-config.json` | Served file, optional | Site-wide settings (below) |
@@ -404,6 +404,8 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
 **How it plays.**
 - **Pausing and resuming.** Music pauses while the mic is open and while the avatar thinks or speaks, then picks up again when the exchange is over.
 - **Controls.** A card under the status pill shows what's playing, with play/pause, next and stop buttons. The same controls work from the lock screen, the car's Now Playing screen and steering-wheel buttons.
+- **Visualizer.** A spectrum under the card, folded away with the strip below it (remembered per browser). For songs and podcasts the service works out the spectrum from the file (`music/levels/...`, about 0.5 KB per second of audio) and the page draws it in step with the music, so the audio element is never rerouted through Web Audio, which iOS would stop when the screen locks. Live radio has no file to read: Chrome and Android analyse it as it plays, and on iPhone the bars stay flat.
+- **Full screen.** Tap the title for large artwork, a seek bar, previous/next and the source: a link to the YouTube video, the station's website or the episode page, plus who published it.
 - **Same-origin audio.** All audio goes through the service at `music/stream/...`, so the page can play plain-http radio and YouTube audio, which only plays for the address that asked for it. `/stream` only serves results from a recent search; it won't fetch an arbitrary URL.
 - **Song cache.** Songs are downloaded whole, repaired with ffmpeg so iPhones can seek in them, and cached in the `music-cache` volume. The cache is capped at `CACHE_GB`, 2 GB by default.
 - **Start-up time.** The first song starts a few seconds after the search, while the avatar is still talking. The next song downloads in the background while the current one plays.

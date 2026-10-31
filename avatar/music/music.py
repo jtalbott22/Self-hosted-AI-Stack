@@ -20,6 +20,7 @@ fetch what a search returned, not any address a caller makes up.
 """
 
 import asyncio
+import hashlib
 import os
 import re
 import secrets
@@ -31,6 +32,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
+import numpy as np
 import yt_dlp
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -60,10 +62,15 @@ def remember(kind: str, src: str) -> str:
     return tok
 
 
-def item(kind, src, title, subtitle="", art="", duration=None, live=False):
+def item(kind, src, title, subtitle="", art="", duration=None, live=False,
+         link="", link_label="", credit="", credit_link=""):
+    """One search result. link/credit say where it came from, for the page to cite."""
+    tok = remember(kind, src)
     return {"kind": kind, "title": title or "Untitled", "subtitle": subtitle or "",
             "art": art or "", "duration": duration, "live": live,
-            "url": "stream/" + remember(kind, src)}
+            "url": "stream/" + tok, "levels": None if live else "levels/" + tok,
+            "link": link or "", "linkLabel": link_label or "",
+            "credit": credit or "", "creditLink": credit_link or ""}
 
 
 # --------------------------------------------------------------------------
@@ -86,9 +93,11 @@ def yt_thumb(e):
 
 
 def yt_entry(e):
-    return item("music", e["id"], e.get("title"),
-                e.get("channel") or e.get("uploader") or "",
-                yt_thumb(e), e.get("duration"))
+    who = e.get("channel") or e.get("uploader") or ""
+    return item("music", e["id"], e.get("title"), who, yt_thumb(e), e.get("duration"),
+                link=f"https://www.youtube.com/watch?v={e['id']}", link_label="Watch on YouTube",
+                credit=f"Uploaded to YouTube by {who}" if who else "From YouTube",
+                credit_link=f"https://www.youtube.com/channel/{e['channel_id']}" if e.get("channel_id") else "")
 
 
 def yt_search(q: str):
@@ -139,6 +148,10 @@ def yt_fetch(vid: str) -> Path:
         os.replace(src, done)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+    try:
+        compute_levels(str(done), LEVELS / f"{vid}.lv")      # about a second for a song
+    except Exception:
+        pass
     prune()
     return done
 
@@ -150,6 +163,10 @@ def prune():
         total += f.stat().st_size
         if total > CACHE_BYTES:
             f.unlink(missing_ok=True)
+            (LEVELS / f"{f.stem}.lv").unlink(missing_ok=True)
+    # podcast levels are small; keep the newest few hundred
+    for f in sorted(LEVELS.glob("*.lv"), key=lambda f: f.stat().st_mtime, reverse=True)[400:]:
+        f.unlink(missing_ok=True)
 
 
 FETCHING: dict[str, asyncio.Task] = {}
@@ -192,7 +209,10 @@ async def radio_search(q: str):
         tags = ", ".join((s.get("tags") or "").split(",")[:3])
         out.append(item("radio", s["url_resolved"], s["name"].strip(),
                         " · ".join(x for x in (tags, where) if x),
-                        s.get("favicon") or "", None, True))
+                        s.get("favicon") or "", None, True,
+                        link=s.get("homepage") or "", link_label="Station website",
+                        credit="Stream listed on radio-browser.info",
+                        credit_link="https://www.radio-browser.info/"))
         if len(out) >= 8:
             break
     return out
@@ -247,7 +267,7 @@ async def podcast_search(q: str, episode: str = ""):
             pass
         img = it.find(ITUNES + "image")
         eps.append((title, enc.get("url"), when, img.get("href") if img is not None else "",
-                    seconds(it.findtext(ITUNES + "duration"))))
+                    seconds(it.findtext(ITUNES + "duration")), (it.findtext("link") or "").strip()))
     if episode:                                  # "the one about ..." / an episode number
         words = [w for w in re.findall(r"\w+", episode.lower()) if len(w) > 1]
         scored = [(sum(w in e[0].lower() for w in words), -i, e) for i, e in enumerate(eps)]
@@ -256,9 +276,101 @@ async def podcast_search(q: str, episode: str = ""):
             i = eps.index(best[2])
             eps = eps[i:]
     name = show.get("collectionName") or ""
+    apple = show.get("collectionViewUrl") or ""
+    by = show.get("artistName") or name
     return [item("podcast", url, title, " · ".join(x for x in (name, when) if x),
-                 img or show_art, dur)
-            for title, url, when, img, dur in eps[:15]]
+                 img or show_art, dur,
+                 link=page if page.startswith("http") else apple,
+                 link_label="Episode page" if page.startswith("http") else "Apple Podcasts",
+                 credit=f"{name} by {by}, from the show's RSS feed" if by != name else f"{name}, from the show's RSS feed",
+                 credit_link=apple)
+            for title, url, when, img, dur, page in eps[:15]]
+
+
+# --------------------------------------------------------------------------
+# Levels for the page's visualizer
+#
+# The page can't analyse the music itself on an iPhone: that means routing
+# the <audio> element through Web Audio, and iOS stops that when the screen
+# locks. So each file is decoded here once, into a spectrum per frame
+# (FPS frames a second, BANDS bands, one byte each), and the page plays the
+# frames back in step with the music. That's about 0.5 KB per second of audio.
+# --------------------------------------------------------------------------
+FPS, BANDS, SR, WIN = 20, 24, 11025, 1024
+HOP = SR // FPS
+LEVELS = CACHE / "levels"
+LEVELS.mkdir(parents=True, exist_ok=True)
+_edges = np.geomspace(55, 5000, BANDS + 1) * WIN / SR
+_bins = [(int(a), max(int(a) + 1, int(b))) for a, b in zip(_edges[:-1], _edges[1:])]
+_hann = np.hanning(WIN).astype(np.float32)
+
+
+def compute_levels(src: str, out: Path):
+    p = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-i", src, "-vn", "-ac", "1",
+                          "-ar", str(SR), "-f", "s16le", "-"], stdout=subprocess.PIPE)
+    frames, tail = [], np.zeros(WIN - HOP, np.float32)
+    try:
+        while True:
+            raw = p.stdout.read(HOP * 2 * 400)
+            if not raw:
+                break
+            x = np.concatenate([tail, np.frombuffer(raw[: len(raw) // 2 * 2], "<i2").astype(np.float32) / 32768])
+            n = (len(x) - WIN) // HOP + 1
+            if n <= 0:
+                tail = x
+                continue
+            idx = np.arange(WIN)[None, :] + HOP * np.arange(n)[:, None]
+            spec = np.abs(np.fft.rfft(x[idx] * _hann, axis=1)) ** 2
+            frames.append(np.stack([spec[:, a:b].mean(axis=1) for a, b in _bins], axis=1))
+            tail = x[n * HOP:]
+    finally:
+        p.stdout.close()
+        p.wait(timeout=60)
+    if not frames:
+        raise RuntimeError("no audio")
+    db = 10 * np.log10(np.concatenate(frames) + 1e-10)
+    # Each band against its own range, so the highs move too, mixed with the
+    # overall level, so quiet passages still look quiet.
+    lo, hi = np.percentile(db, 8, axis=0), np.percentile(db, 99.5, axis=0)
+    per = np.clip((db - lo) / np.maximum(hi - lo, 1), 0, 1)
+    peak = np.percentile(db, 99.5)
+    whole = np.clip((db - (peak - 55)) / 55, 0, 1)
+    v = (0.6 * per + 0.4 * whole) ** 1.4
+    tmp = out.with_suffix(".part")
+    tmp.write_bytes((v * 255).astype(np.uint8).tobytes())
+    os.replace(tmp, out)
+
+
+LEVEL_TASKS: dict[str, asyncio.Task] = {}
+
+
+def levels_key(t) -> str:
+    return t["src"] if t["kind"] == "music" else hashlib.sha1(t["src"].encode()).hexdigest()
+
+
+@app.get("/levels/{tok}")
+async def levels(tok: str):
+    """200 with the frames, or 202 while they're being worked out (ask again)."""
+    t = TOKENS.get(tok)
+    if not t or t["kind"] == "radio":
+        raise HTTPException(404, "No levels for that.")
+    key = levels_key(t)
+    out = LEVELS / f"{key}.lv"
+    hdr = {"x-fps": str(FPS), "x-bands": str(BANDS), "cache-control": "no-store"}
+    if out.exists():
+        return FileResponse(out, media_type="application/octet-stream", headers=hdr)
+    if t["kind"] == "music":
+        src = CACHE / f"{key}.m4a"
+        if not src.exists():                     # the song itself isn't here yet
+            return Response(status_code=202, headers=hdr)
+        src = str(src)
+    else:
+        src = t["src"]                           # ffmpeg reads the podcast straight from its host
+    if key not in LEVEL_TASKS:
+        task = asyncio.create_task(asyncio.to_thread(compute_levels, src, out))
+        LEVEL_TASKS[key] = task
+        task.add_done_callback(lambda f: (LEVEL_TASKS.pop(key, None), f.exception()))
+    return Response(status_code=202, headers=hdr)
 
 
 # --------------------------------------------------------------------------
