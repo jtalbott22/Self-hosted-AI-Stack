@@ -36,39 +36,48 @@
   #lamStage canvas{width:100%!important;height:100%!important;display:block}
   #stage canvas{display:block}
 
-  /* Captions: a short transcript that grows upward and scrolls once it's
-     taller than the box. It sticks to the newest line while text streams in,
-     unless you've scrolled up to reread something. (The old version used
-     justify-content:flex-end with overflow:hidden, which silently cut off the
-     start of anything longer than about two lines and couldn't be scrolled.) */
-  /* A glass card, centred on the stage, so captions stay readable over any
-     outfit or background (white text straight over a white shirt wasn't). */
+  /* The conversation: a glass bubble holding the whole chat, newest at the
+     bottom. It sticks to the newest line while text streams in, unless
+     you've scrolled up to reread something. Drag it by the grip at the top
+     and it settles at the nearest corner, top or bottom middle. */
   #caption{
     position:fixed; z-index:2; left:calc((100vw - var(--stageR)) / 2); transform:translateX(-50%);
     bottom:calc(max(var(--stageB), var(--barH)) + 12px);
     width:max-content; max-width:min(720px, calc(100vw - var(--stageR) - 32px));
-    padding:10px 18px; border-radius:16px;
+    padding:0 18px 10px; border-radius:16px;
     background:rgba(12,16,22,.6); border:1px solid rgba(255,255,255,.07);
     backdrop-filter:blur(14px) saturate(1.15); -webkit-backdrop-filter:blur(14px) saturate(1.15);
     text-align:center; font-size:18px; line-height:1.45;
     text-shadow:0 1px 8px rgba(0,0,0,.4);
-    max-height:min(34dvh, 10em); overflow-y:auto; overflow-x:hidden;
-    overscroll-behavior:contain; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+    max-height:min(38dvh, 13em);
     display:flex; flex-direction:column;
-    pointer-events:none;
     transition:left .34s var(--ease), bottom .3s var(--ease), max-width .34s var(--ease);
   }
   #caption.empty{display:none}
-  #caption::-webkit-scrollbar{display:none}
-  #caption.scrolls{pointer-events:auto}              /* only grab touches when there's something to scroll */
-  #caption.clipped{                                  /* fade the top edge when earlier lines are scrolled away */
+  #capGrip{flex:0 0 auto;height:16px;margin:0 -18px;display:grid;place-items:center;touch-action:none;cursor:grab}
+  #capGrip span{width:34px;height:4px;border-radius:2px;background:rgba(255,255,255,.2)}
+  #capLog{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;
+    overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  #capLog::-webkit-scrollbar{display:none}
+  #capLog.clipped{                                   /* fade the top edge when earlier lines are scrolled away */
     -webkit-mask-image:linear-gradient(to bottom, transparent 0, #000 1.6em);
             mask-image:linear-gradient(to bottom, transparent 0, #000 1.6em)}
-  #caption > :first-child{margin-top:auto}           /* bottom-aligned, but still scrollable */
-  #caption .you{color:var(--dim); font-size:15px; display:-webkit-box; -webkit-box-orient:vertical;
-    -webkit-line-clamp:2; overflow:hidden; margin-bottom:4px; flex:0 0 auto}
+  #capLog > :first-child{margin-top:auto}            /* bottom-aligned, but still scrollable */
+  #caption .turn{flex:0 0 auto;display:flex;flex-direction:column}
+  #caption .turn + .turn, #caption .turn + .reply, #caption .turn + .interim{margin-top:12px}
+  #caption .turn.old{opacity:.62}
+  #caption .you{color:var(--dim); font-size:15px; margin-bottom:4px; flex:0 0 auto; overflow-wrap:anywhere}
   #caption .reply{white-space:pre-line; overflow-wrap:anywhere; flex:0 0 auto}
+  #caption .notice{color:var(--dim)}
   #caption .interim{color:var(--dim); font-style:italic; flex:0 0 auto}
+  /* where it can be pinned */
+  body #caption.pin-tc{top:calc(env(safe-area-inset-top,0px) + 58px);bottom:auto}
+  body #caption.pin-tl, body #caption.pin-tr, body #caption.pin-bl, body #caption.pin-br{
+    transform:none;max-width:min(420px, calc(100vw - var(--stageR) - 28px));text-align:left}
+  body #caption.pin-tl, body #caption.pin-bl{left:14px}
+  body #caption.pin-tr, body #caption.pin-br{left:auto;right:calc(var(--stageR) + 14px)}
+  body #caption.pin-tl, body #caption.pin-tr{top:calc(env(safe-area-inset-top,0px) + 58px);bottom:auto}
+  .dragging{transition:none!important;z-index:9!important;box-shadow:0 18px 50px rgba(0,0,0,.5)}
 
   /* ---- mute: replies show as captions only, no voice ---- */
   #topLeft{position:fixed;z-index:3;top:calc(env(safe-area-inset-top,0px) + 14px);left:14px;
@@ -165,7 +174,7 @@
     padding:8px 16px;font:inherit;font-size:14px;cursor:pointer}
   /* Phones: the Lens is a sheet above the controls; the stage is what's above the sheet. */
   body.lens-open{ --stageB:calc(var(--barH) + var(--lensH)) }
-  body.lens-open #caption{font-size:15.5px;max-height:min(14dvh, 3.9em);padding:6px 14px}
+  body.lens-open #caption{font-size:15.5px;max-height:min(16dvh, 5em);padding:0 14px 6px}
   body.lens-open #caption .you{display:none}
   body.lens-full #caption{display:none}            /* full-height sheet: no room left for the face or captions */
   body.lens-drag #stage, body.lens-drag #caption, body.lens-drag #typed{transition:none}
@@ -183,8 +192,8 @@
     #lens.open{transition:transform .34s var(--ease),width .34s var(--ease)}
     #lens .grab{display:none}
     #lens header{padding-top:10px}
-    body.lens-open #caption{font-size:17px;max-height:min(34dvh, 10em);padding:10px 18px}
-    body.lens-open #caption .you{display:-webkit-box}
+    body.lens-open #caption{font-size:17px;max-height:min(38dvh, 13em);padding:0 18px 10px}
+    body.lens-open #caption .you{display:block}
     body.lens-full #caption{display:flex}
     body.lens-open #selfTile{right:calc(var(--stageR) + 2px)}
   }
@@ -252,8 +261,12 @@
     display:none;flex-direction:column;padding:6px 6px 0;border-radius:14px;
     width:min(340px, calc(100vw - var(--stageR) - 28px));
     background:rgba(20,26,35,.62);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-    border:1px solid rgba(255,255,255,.06);transition:width .34s var(--ease)}
+    border:1px solid rgba(255,255,255,.06);transition:width .34s var(--ease);
+    touch-action:none;cursor:grab}                  /* the whole card drags; its buttons still tap */
   #music.on{display:flex}
+  #music.pin-tr{left:auto;right:calc(var(--stageR) + 14px);top:calc(env(safe-area-inset-top,0px) + 14px)}
+  #music.pin-bl, #music.pin-br{top:auto;bottom:calc(max(var(--stageB), var(--barH)) + 12px)}
+  #music.pin-br{left:auto;right:calc(var(--stageR) + 14px)}
   #music .mrow{display:flex;align-items:center;gap:4px}
   #music button{border:0;padding:0;background:none;color:var(--text);font:inherit;cursor:pointer;-webkit-tap-highlight-color:transparent}
   #music button:focus-visible{outline:2px solid var(--live);outline-offset:1px}
@@ -313,6 +326,27 @@
   #mfLink{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;margin-bottom:6px;
     border:1px solid var(--line);background:rgba(25,33,44,.7);color:var(--text)!important;font-size:14px}
   #mfLink svg{width:14px;height:14px}
+  /* queue: up next and what's played */
+  #mfListBtn{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;height:42px;padding:0 14px!important;
+    border-radius:999px;display:flex;align-items:center;gap:8px;background:rgba(25,33,44,.7)!important;font-size:14px!important}
+  #mfListBtn svg{width:18px;height:18px}
+  #musicFull.list #mfListBtn{background:var(--text)!important;color:#10141b!important}
+  #mfList{display:none;width:min(100%, 560px);flex:1 1 auto;min-height:120px;overflow-y:auto;text-align:left;
+    overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+  #musicFull.list #mfList{display:block}
+  #musicFull.list #mfArt, #musicFull.list #mfViz, #musicFull.list #mfKind{display:none}
+  #musicFull.list{justify-content:flex-start}
+  #mfList h4{margin:14px 4px 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:600;
+    display:flex;justify-content:space-between;align-items:baseline}
+  #mfList h4 button{font-size:12px!important;letter-spacing:0;text-transform:none;color:var(--live)!important}
+  #mfList .q{width:100%;display:flex;align-items:center;gap:12px;padding:7px 4px!important;border-radius:10px;text-align:left}
+  #mfList .q:active, #mfList .q:hover{background:rgba(255,255,255,.06)!important}
+  #mfList .q img{width:44px;height:44px;border-radius:8px;object-fit:cover;flex:0 0 auto;background:var(--panel)}
+  #mfList .q span{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  #mfList .q b{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #mfList .q i{font-style:normal;font-size:12.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #mfList .q.now b{color:var(--live)}
+  #mfList .empty{color:var(--dim);font-size:13.5px;padding:6px 4px}
   #callBar .t{color:var(--dim);font-variant-numeric:tabular-nums}
   #err{position:fixed;top:14px;left:calc((100vw - var(--stageR)) / 2);transform:translateX(-50%);
     background:#2a1719;border:1px solid #5a2b2b;color:#ffb9b3;
@@ -334,7 +368,7 @@
 <canvas id="meters" width="300" height="150" aria-hidden="true"></canvas>
 <div id="callBar" aria-hidden="true"><span id="callName"></span><span class="t" id="callTime">0:00</span></div>
 <div id="selfTile" aria-label="Your camera"><video id="selfVideo" playsinline muted autoplay></video></div>
-<div id="caption" aria-live="polite"></div>
+<div id="caption" class="empty"><div id="capGrip" title="Drag to move"><span></span></div><div id="capLog" aria-live="polite"></div></div>
 <div id="typed"><input id="typedInput" type="text" placeholder="Type a message and press Enter" autocomplete="off"></div>
 
 <div id="topLeft">
@@ -361,10 +395,12 @@
 <div id="musicFull" role="dialog" aria-label="Now playing" aria-hidden="true">
   <div id="mfBg"></div>
   <button id="mfClose" type="button" aria-label="Close" title="Close (Esc)"><svg class="line" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+  <button id="mfListBtn" type="button" aria-pressed="false"><svg class="line" viewBox="0 0 24 24"><path d="M4 6h12M4 12h12M4 18h8M18 15v6l4-3z"/></svg>Queue</button>
   <div id="mfKind"></div>
   <img id="mfArt" alt="" referrerpolicy="no-referrer">
   <div id="mfTitle"></div>
   <div id="mfSub"></div>
+  <div id="mfList" aria-label="Queue and history"></div>
   <canvas id="mfViz" aria-hidden="true"></canvas>
   <div id="mfTime"><span id="mfCur">0:00</span><input type="range" id="mfSeek" min="0" max="1" step="1" value="0" aria-label="Position"><span id="mfDur">0:00</span></div>
   <div id="mfLive">● LIVE</div>
@@ -1530,6 +1566,61 @@ face.load(CFG.avatarUrl);
 })();
 
 /* ================================================================== *
+ * Floating windows — drag one (by `handle`) and it settles at the
+ * nearest of its `spots`, each a .pin-<spot> class in the CSS, so it
+ * stays put through resizes and the Lens opening. Remembered per browser.
+ * A drag starts after a few pixels, so taps on the window still work.
+ * ================================================================== */
+function pinnable(el, { handle = el, key, spots, def, skip }){
+  let spot = def;
+  try { const v = localStorage.getItem(key); if (spots.includes(v)) spot = v; } catch {}
+  const apply = s => { for (const x of spots) el.classList.toggle('pin-' + x, x === s); };
+  apply(spot);
+  let d = null;
+  handle.addEventListener('pointerdown', e => {
+    if (e.button > 0 || (skip && skip(e.target))) return;
+    d = { x: e.clientX, y: e.clientY, id: e.pointerId, moved: false };
+  });
+  // Followed on the window: a small handle loses the pointer before a drag even starts.
+  addEventListener('pointermove', e => {
+    if (!d || e.pointerId !== d.id) return;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    if (!d.moved){
+      if (Math.hypot(dx, dy) < 8) return;
+      d.moved = true; el.classList.add('dragging');
+    }
+    if (e.cancelable) e.preventDefault();
+    el.style.translate = dx + 'px ' + dy + 'px';
+  }, { passive:false });
+  const end = e => {
+    if (!d || (e && e.pointerId !== d.id)) return;
+    const was = d; d = null;
+    if (!was || !was.moved) return;
+    // the click that follows a drag isn't a tap
+    const eat = ev => { ev.stopPropagation(); ev.preventDefault(); };
+    addEventListener('click', eat, { capture:true, once:true });
+    setTimeout(() => removeEventListener('click', eat, { capture:true }), 60);
+    const r0 = el.getBoundingClientRect(), cx = r0.left + r0.width / 2, cy = r0.top + r0.height / 2;
+    el.style.transition = 'none'; el.style.translate = '';
+    let best = spot, bd = Infinity;
+    for (const s of spots){
+      apply(s);
+      const r = el.getBoundingClientRect(), dd = Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy);
+      if (dd < bd){ bd = dd; best = s; }
+    }
+    spot = best; apply(spot);
+    try { localStorage.setItem(key, spot); } catch {}
+    const r1 = el.getBoundingClientRect();
+    el.style.translate = (r0.left - r1.left) + 'px ' + (r0.top - r1.top) + 'px';
+    el.getBoundingClientRect();
+    el.classList.remove('dragging');
+    el.style.transition = 'translate .28s var(--ease)'; el.style.translate = '0px 0px';
+    setTimeout(() => { el.style.transition = ''; el.style.translate = ''; }, 320);
+  };
+  addEventListener('pointerup', end); addEventListener('pointercancel', end);
+}
+
+/* ================================================================== *
  * State + captions
  * ================================================================== */
 let state = 'idle', speaking = false;
@@ -1550,14 +1641,11 @@ const plainReply = s => (s || '')
   .replace(/\*\*|__|`/g, '').replace(/\n{3,}/g, '\n\n').trim();
 
 const captionBox = (() => {
-  const el = $('caption');
-  let follow = true, lastUser = null;
+  const box = $('caption'), el = $('capLog');
+  let follow = true, lastKey = null;
   const atBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight < 6;
-  function marks(){
-    el.classList.toggle('scrolls', el.scrollHeight > el.clientHeight + 2);
-    el.classList.toggle('clipped', el.scrollTop > 2);
-  }
-  // Only a scroll the person makes can unstick the caption from the newest line;
+  const marks = () => el.classList.toggle('clipped', el.scrollTop > 2);
+  // Only a scroll the person makes can unstick the chat from the newest line;
   // the box resizing (Lens opening, a new reply) also fires scroll events.
   let userAt = 0;
   const touched = () => { userAt = performance.now(); };
@@ -1567,24 +1655,40 @@ const captionBox = (() => {
   const restick = () => { if (follow) el.scrollTop = el.scrollHeight; marks(); };
   addEventListener('resize', restick);
   new ResizeObserver(restick).observe(el);
+  pinnable(box, { handle: $('capGrip'), key:'capSpot', spots:['bc', 'tc', 'tl', 'tr', 'bl', 'br'], def:'bc' });
   return {
-    set(html, user){
-      if (user !== lastUser){ follow = true; lastUser = user; }     // a new exchange starts at the newest line
+    set(html, key){
+      if (key !== lastKey){ follow = true; lastKey = key; }      // a new exchange starts at the newest line
       el.innerHTML = html;
-      el.classList.toggle('empty', !el.textContent.trim());     // no empty glass card while thinking
+      box.classList.toggle('empty', !el.textContent.trim());    // no empty glass card while thinking
       if (follow) el.scrollTop = el.scrollHeight;
       marks();
     }
   };
 })();
 
-/* The last user line and reply shown, so a follow-up listen can keep the question on screen. */
+/* The conversation so far: one entry per exchange, so you can scroll back.
+   caption(user, reply) updates the newest exchange, or starts one when the
+   user line is new. A reply with no user line is a notice ("I didn't hear
+   anything"): shown at the bottom until the next caption, never kept. */
+const chat = [];
+let notice = '';
 let lastCap = { user:'', reply:'' };
+function chatTurn(user){ chat.push({ user, reply:'' }); if (chat.length > 80) chat.shift(); notice = ''; }
 function caption(user, reply, interim){
   if (reply || !interim) lastCap = { user:user || '', reply:reply || '' };
-  captionBox.set((user ? `<span class="you">${esc(user)}</span>` : '') +
-    (reply || !interim ? `<span class="reply">${esc(plainReply(reply))}</span>` : '') +
-    (interim ? `<span class="interim">${esc(interim)}</span>` : ''), user || '');
+  const t = chat[chat.length - 1];
+  if (user){
+    if (!t || t.user !== user) chatTurn(user);
+    chat[chat.length - 1].reply = reply || '';
+    notice = '';
+  } else if (!interim) notice = reply || '';
+  const html = chat.map((c, i) =>
+    `<div class="turn${i < chat.length - 1 ? ' old' : ''}"><span class="you">${esc(c.user)}</span>` +
+    (c.reply ? `<span class="reply">${esc(plainReply(c.reply))}</span>` : '') + '</div>').join('') +
+    (notice ? `<span class="reply notice">${esc(notice)}</span>` : '') +
+    (interim ? `<span class="interim">${esc(interim)}</span>` : '');
+  captionBox.set(html, chat.length);
 }
 
 /* ================================================================== *
@@ -1889,6 +1993,7 @@ async function streamTurn(gen, onText){
 }
 
 async function ask(text, via){
+  chatTurn(text);
   setState('thinking'); caption(text, '');
   followUp = -1;
   streaming = true;
@@ -2312,7 +2417,8 @@ const lens = (() => {
 const music = (() => {
   const el = $('musicEl'), card = $('music');
   let queue = [], idx = -1, want = false, held = false, primed = false;
-  let failures = 0, pausedAt = 0, resumeT = 0;
+  let failures = 0, pausedAt = 0, resumeT = 0, quietAt = 0;
+  const quiet = () => { quietAt = performance.now(); };    // a pause or source change this page made itself
   const base = () => CFG.musicUrl.replace(/\/$/, '');
   const cur = () => queue[idx] || null;
   const enabled = () => CFG.musicOn !== 'off';
@@ -2362,6 +2468,7 @@ const music = (() => {
     }
     clock();
     kick();
+    renderList();
     const ms = navigator.mediaSession;
     if (ms){
       try {
@@ -2376,14 +2483,22 @@ const music = (() => {
   function load(i){
     idx = i;
     const it = cur(); if (!it) return;
+    quiet();
     el.src = new URL(it.url, base() + '/').href;
     el.load();
     loadLevels(it);
     paint();
-    // The next song downloads while this one plays, so it starts without a wait.
-    const nx = queue[idx + 1];
-    if (nx && nx.kind === 'music')
-      fetch(base() + '/prefetch/' + nx.url.split('/').pop(), { method:'POST' }).catch(() => {});
+  }
+  /* The next song is downloaded only in the last minute of this one, so
+     skipping around never pulls down songs you don't hear. */
+  let prefetched = null;
+  function maybePrefetch(){
+    const it = cur(), nx = queue[idx + 1];
+    if (!it || !nx || nx.kind !== 'music' || prefetched === nx || el.paused) return;
+    const left = (isFinite(el.duration) ? el.duration : (it.duration || 0)) - el.currentTime;
+    if (left > 60 || left <= 0) return;
+    prefetched = nx;
+    fetch(base() + '/prefetch/' + nx.url.split('/').pop(), { method:'POST' }).catch(() => {});
   }
 
   /* Plays when nothing else is going on; otherwise it starts once the avatar is done. */
@@ -2396,11 +2511,15 @@ const music = (() => {
     el.play().catch(e => {
       if (e.name === 'NotAllowedError'){
         want = false; paint();
-        caption('', 'Tap ▶ at the top to start the music. Your browser wants a tap first.');
+        caption('', 'Tap ▶ on the music card to start the music. Your browser wants a tap first.');
       }
+      // Anything else (iOS often says AbortError when the source just changed):
+      // try again as soon as there's something to play. The watchdog below
+      // catches whatever this misses.
+      else el.addEventListener('canplay', () => { if (want && !held && el.paused) el.play().catch(() => {}); }, { once:true });
     });
   }
-  function hush(){ if (!el.paused){ el.pause(); pausedAt = Date.now(); } }
+  function hush(){ if (!el.paused){ quiet(); el.pause(); pausedAt = Date.now(); } }
 
   function onState(s){
     held = s !== 'idle';
@@ -2415,22 +2534,41 @@ const music = (() => {
     load(0);
     if (state === 'idle') go();
   }
-  function next(step = 1){
-    const i = idx + step;
+  function next(step = 1){ return jump(idx + step); }
+  function jump(i){
     if (i < 0 || i >= queue.length) return false;
     load(i); if (want) go();
+    renderList();
     return true;
   }
   function pause(){ want = false; hush(); paint(); }
   function resume(){ if (!cur()) return false; want = true; paint(); go(); return true; }
   function stop(){
     want = false; queue = []; idx = -1; lv = null; lvFor = null; tap = null;
-    el.pause(); el.removeAttribute('src'); el.load();
+    quiet(); el.pause(); el.removeAttribute('src'); el.load();
     paint();
     if (navigator.mediaSession){ try { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch {} }
   }
 
-  el.addEventListener('playing', () => { failures = 0; liveTap(); kick(); });
+  el.addEventListener('playing', () => {
+    failures = 0; liveTap(); kick();
+    const it = cur();
+    if (it && !it._logged){ it._logged = true; remember(it); }
+    if (!want && it){ want = true; paint(); }             // started from the lock screen or the car
+  });
+  /* A pause this page didn't ask for: iOS (a call, Siri, another app) or the
+     car. Show it as paused instead of looking like it's still playing. */
+  el.addEventListener('pause', () => {
+    if (el.ended || performance.now() - quietAt < 800 || !cur()) return;
+    if (want){ want = false; paint(); }
+  });
+  /* Should be playing but isn't — most often the next song on an iPhone,
+     whose play() can quietly fail when it's called as the last one ends. */
+  setInterval(() => {
+    if (want && !held && !listenSoon && !rec && state === 'idle' && cur() &&
+        el.paused && !el.ended && el.readyState >= 2) el.play().catch(() => {});
+  }, 2000);
+  el.addEventListener('timeupdate', maybePrefetch);
   el.addEventListener('timeupdate', clock);
   el.addEventListener('durationchange', clock);
 
@@ -2573,6 +2711,7 @@ const music = (() => {
     const it = cur();
     if (!it || el.src === keepAlive.url()) return;
     if (!(it.kind === 'music' && next())) { want = false; paint(); }
+    else renderList();
   });
   el.addEventListener('error', () => {
     const it = cur();
@@ -2595,6 +2734,93 @@ const music = (() => {
   $('musicPlay').onclick = () => { lipsync.unlock(); want ? pause() : resume(); };
   $('musicNext').onclick = () => { lipsync.unlock(); next(); };
   $('musicStop').onclick = () => stop();
+
+  /* ---- history: what's been played, kept in this browser ---- */
+  const HKEY = 'musicHistory';
+  let hist = [];
+  try { hist = JSON.parse(localStorage.getItem(HKEY) || '[]').filter(h => h && h.title); } catch {}
+  function remember(it){
+    const h = { kind:it.kind, title:it.title, subtitle:it.subtitle, art:it.art, link:it.link, linkLabel:it.linkLabel,
+                credit:it.credit, creditLink:it.creditLink, live:it.live, at:Date.now() };
+    if (hist[0] && hist[0].title === h.title && hist[0].kind === h.kind) hist[0] = h;
+    else hist.unshift(h);
+    hist = hist.slice(0, 50);
+    try { localStorage.setItem(HKEY, JSON.stringify(hist)); } catch {}
+    renderList();
+  }
+  const ytId = link => (/[?&]v=([A-Za-z0-9_-]{11})/.exec(link || '') || [])[1];
+
+  /* Search the music service. Returns the items, or a sentence saying why not. */
+  async function find(params){
+    let j;
+    try {
+      const r = await fetch(base() + '/search?' + new URLSearchParams(params));
+      j = await r.json().catch(() => ({}));
+      if (!r.ok) return 'Music search failed: ' + (j.detail || ('status ' + r.status));
+    } catch { return 'The music service isn’t reachable. Tell the user it may not be running.'; }
+    return j.items || [];
+  }
+  /* Play something from the history again. A song goes by its YouTube id,
+     one request; a podcast by show and episode title; a station by name. */
+  async function replay(h){
+    const vid = h.kind === 'music' && ytId(h.link);
+    const items = await find(vid ? { kind:'music', id:vid, title:h.title, by:h.subtitle || '' }
+      : h.kind === 'podcast' ? { kind:'podcast', q:(h.subtitle || '').split(' · ')[0] || h.title, episode:h.title }
+      : { kind:h.kind, q:h.title });
+    if (typeof items === 'string' || !items.length){ showError(typeof items === 'string' ? items : 'Couldn’t find “' + h.title + '” again.'); return; }
+    play(items);
+  }
+
+  function row(it, now, onTap){
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'q' + (now ? ' now' : '');
+    const img = document.createElement('img'); img.alt = ''; img.referrerPolicy = 'no-referrer'; img.loading = 'lazy';
+    img.src = it.art || NOTE; img.onerror = () => { if (img.getAttribute('src') !== NOTE) img.src = NOTE; };
+    const t = document.createElement('span'), b1 = document.createElement('b'), i1 = document.createElement('i');
+    b1.textContent = it.title; i1.textContent = (now ? (want ? 'Playing · ' : 'Paused · ') : '') + (it.subtitle || KIND[it.kind] || '');
+    t.append(b1, i1); b.append(img, t);
+    b.onclick = () => { lipsync.unlock(); onTap(); };
+    return b;
+  }
+  function head(text, action, onAction){
+    const h = document.createElement('h4'); h.textContent = text;
+    if (action){ const a = document.createElement('button'); a.type = 'button'; a.textContent = action; a.onclick = onAction; h.append(a); }
+    return h;
+  }
+  function renderList(){
+    const box = $('mfList');
+    if (!full.classList.contains('list')) return;
+    const keep = box.scrollTop;
+    box.textContent = '';
+    const it = cur();
+    if (it){
+      box.append(head('Now playing'), row(it, true, () => { want ? pause() : resume(); }));
+      const up = queue.slice(idx + 1);
+      box.append(head(it.live ? 'Up next' : 'Up next · ' + up.length));
+      if (!up.length){
+        const p = document.createElement('div'); p.className = 'empty';
+        p.textContent = it.live ? 'A live station plays until you stop it.' : 'Nothing after this one. Ask for more and it starts a new list.';
+        box.append(p);
+      }
+      up.forEach((q, k) => box.append(row(q, false, () => { want = true; jump(idx + 1 + k); })));
+    }
+    box.append(head('Played', hist.length ? 'Clear' : '', () => {
+      hist = []; try { localStorage.removeItem(HKEY); } catch {} renderList();
+    }));
+    if (!hist.length){ const p = document.createElement('div'); p.className = 'empty'; p.textContent = 'Nothing yet.'; box.append(p); }
+    hist.forEach(h => box.append(row(h, false, () => replay(h))));
+    box.scrollTop = keep;
+  }
+  $('mfListBtn').onclick = () => {
+    const on = !full.classList.contains('list');
+    full.classList.toggle('list', on); $('mfListBtn').setAttribute('aria-pressed', String(on));
+    renderList();
+    if (on) $('mfList').scrollTop = 0;
+  };
+
+  // The card can be dragged to any corner, like the camera tile.
+  pinnable(card, { key:'musicSpot', spots:['tl', 'tr', 'bl', 'br'], def:'tl',
+                   skip: t => !!t.closest('button:not(#musicOpen)') });
 
   /* ---- what the model can call ---- */
   const TOOLS = [
@@ -2625,20 +2851,15 @@ const music = (() => {
         want = true;
         return next(a === 'next' ? 1 : -1) ? 'Now playing ' + describe(cur()) + '.' : 'There is nothing ' + (a === 'next' ? 'after' : 'before') + ' this one.';
       }
+      const up = cur().live ? [] : queue.slice(idx + 1, idx + 4);
       return (want ? 'Playing ' : 'Paused on ') + describe(cur()) + '.' +
-        (queue[idx + 1] && !cur().live ? ' Up next: ' + describe(queue[idx + 1]) + '.' : '');
+        (up.length ? ' Up next: ' + up.map(describe).join('; ') + '. The full list is under Queue when the user taps the song title.' : '');
     }
     const kind = ['music', 'radio', 'podcast'].includes(args.kind) ? args.kind : 'music';
     const q = String(args.query || '').trim();
     if (!q) return 'Ask the user what to play.';
-    const u = base() + '/search?' + new URLSearchParams({ q, kind, episode: args.episode || '' });
-    let j;
-    try {
-      const r = await fetch(u);
-      j = await r.json().catch(() => ({}));
-      if (!r.ok) return 'Music search failed: ' + (j.detail || ('status ' + r.status));
-    } catch { return 'The music service isn’t reachable. Tell the user it may not be running.'; }
-    const items = j.items || [];
+    const items = await find({ q, kind, episode: args.episode || '' });
+    if (typeof items === 'string') return items;
     if (!items.length) return 'Nothing found for "' + q + '" (' + kind + '). Suggest a different search.';
     play(items);
     const it = items[0];

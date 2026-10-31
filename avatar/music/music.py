@@ -102,14 +102,18 @@ def yt_entry(e):
 
 def yt_search(q: str):
     with yt_dlp.YoutubeDL(YDL_FLAT) as y:
-        res = y.extract_info(f"ytsearch8:{q}", download=False) or {}
+        res = y.extract_info(f"ytsearch5:{q}", download=False) or {}
     hits = [e for e in res.get("entries") or []
             if e and e.get("id") and (e.get("duration") or 0) < 3 * 3600
             and "/shorts/" not in (e.get("url") or "")]
     if not hits:
         return []
-    first = hits[0]
-    # The first hit's mix: related songs, the way YouTube Music keeps playing.
+    return yt_with_mix(hits[0], hits[1:])
+
+
+def yt_with_mix(first: dict, fallback: list):
+    """A song followed by its YouTube mix: related songs, the way YouTube
+    Music keeps playing. One request for the list; no media is fetched."""
     try:
         with yt_dlp.YoutubeDL(YDL_MIX) as y:
             mix = y.extract_info(
@@ -119,7 +123,7 @@ def yt_search(q: str):
     except Exception:
         rest = []
     if len(rest) < 3:
-        rest = hits[1:]
+        rest = fallback
     return [yt_entry(first)] + [yt_entry(e) for e in rest[:MIX_LEN]]
 
 
@@ -172,11 +176,20 @@ def prune():
 FETCHING: dict[str, asyncio.Task] = {}
 
 
+# At most two songs download at once: the one playing and the one after it.
+DOWNLOADS = asyncio.Semaphore(2)
+
+
+async def _fetch_one(vid: str) -> Path:
+    async with DOWNLOADS:
+        return await asyncio.to_thread(yt_fetch, vid)
+
+
 async def yt_file(vid: str) -> Path:
     """One download per song, however many requests ask for it at once."""
     task = FETCHING.get(vid)
     if task is None:
-        task = asyncio.create_task(asyncio.to_thread(yt_fetch, vid))
+        task = asyncio.create_task(_fetch_one(vid))
         FETCHING[vid] = task
         task.add_done_callback(lambda _t: FETCHING.pop(vid, None))
     return await asyncio.shield(task)
@@ -382,12 +395,21 @@ def health():
 
 
 @app.get("/search")
-async def search(q: str, kind: str = "music", episode: str = ""):
+async def search(q: str = "", kind: str = "music", episode: str = "",
+                 id: str = "", title: str = "", by: str = ""):
+    """id (kind music): play that YouTube video again, as from the history,
+    with title/by from the page, so it costs one request instead of two."""
     q = q.strip()[:200]
-    if not q:
+    if id and not re.fullmatch(r"[A-Za-z0-9_-]{11}", id):
+        raise HTTPException(400, "That isn't a YouTube video id.")
+    if not q and not (id and kind == "music"):
         raise HTTPException(400, "Say what to play.")
     try:
-        if kind == "radio":
+        if kind == "music" and id:
+            first = {"id": id, "title": title[:300] or "YouTube video", "channel": by[:200]}
+            items = await asyncio.to_thread(yt_with_mix, first, [])
+            asyncio.ensure_future(yt_file(id)).add_done_callback(lambda f: f.exception())
+        elif kind == "radio":
             items = await radio_search(q)
         elif kind == "podcast":
             items = await podcast_search(q, episode.strip()[:200])
