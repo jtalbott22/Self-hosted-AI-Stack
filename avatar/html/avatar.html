@@ -278,6 +278,9 @@
     background:rgba(14,18,24,.96);border-top:1px solid var(--line);border-radius:18px 18px 0 0;
     max-height:70vh;overflow:auto;box-shadow:0 -10px 30px rgba(0,0,0,.4)}
   #carTest[hidden],#carTest [hidden]{display:none!important}
+  /* guided test: the app not drawn at all, or drawn without its frosted-glass blur */
+  body.ct-blank > :not(#carTest){visibility:hidden!important}
+  body.no-glass *{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
   #carTest .ctHead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:15px}
   #ctClock{font-variant-numeric:tabular-nums;color:var(--dim);font-size:15px}
   #ctName{font-size:22px;font-weight:600;margin:8px 0 4px;line-height:1.25}
@@ -777,7 +780,7 @@
   <h3>Troubleshooting</h3>
   <p class="note" id="debugLinks" hidden><a id="carplayTest" href="carplay-test.html" target="_blank" rel="noopener">CarPlay audio test</a>: a plain audio player with nothing else on the page. If it stutters over wireless CarPlay too, the problem is Safari and the phone’s link to the car, not this page.</p>
   <div class="row"><button id="carTestBtn">Start the guided CarPlay test</button></div>
-  <p class="note">Plays one song through each setup below in turn, about 75 seconds each, and asks whether it was smooth. Open the app with <code>?cartest</code> on the address to start it straight away. Have a passenger tap, or tap only when it’s safe.</p>
+  <p class="note">Plays one song through six setups in turn, 30 to 60 seconds each (the app blanked, without its frosted glass, with its audio engines closed, with the phone locked), and asks whether it was smooth. Open the app with <code>?cartest</code> on the address to start it straight away. Have a passenger tap, or tap only when it’s safe.</p>
   <p class="note"><b>Performance tests.</b> Switch parts of the page off to find what upsets playback. They take effect at once, stay off on this device until you switch them back on, and are noted in the playback reports on the server.</p>
   <label class="check"><input type="checkbox" class="perf" data-k="face"> Face drawing</label>
   <label class="check"><input type="checkbox" class="perf" data-k="viz"> Visualizer and effects (bars, particles, moving artwork)</label>
@@ -2454,6 +2457,12 @@ $('capLog').addEventListener('click', e => {
  * just goes quiet instead of replacing the question with an error.
  * ================================================================== */
 let rec = null, micCtx = null;
+/* Guided CarPlay test: close both Web Audio contexts (speech, and the mic's
+   level meter) instead of leaving them suspended. The next tap makes new ones. */
+function closeAudioContexts(){
+  try { if (lipsync.ctx){ lipsync.ctx.close(); lipsync.ctx = null; lipsync.analyser = null; } } catch {}
+  try { if (micCtx){ micCtx.close(); micCtx = null; } } catch {}
+}
 const pauseMs = () => clamp(parseFloat(CFG.endSilence) || 1.4, 0.4, 6) * 1000;
 
 function listenCaption(auto, interim){
@@ -4306,18 +4315,15 @@ const music = (() => {
     const NONE = { face:false, viz:false, lyrics:false, tilt:false, keep:false, session:false };
     const add = ks => Object.assign({}, NONE, ...ks.map(k => ({ [k]:true })));
     const STEPS = [
-      { name:'Plain file, everything off', note:'The test page’s file, streamed from the web server: the baseline that played cleanly before.', file:true, perf:NONE },
-      { name:'Song downloaded, everything off', note:'The song comes from the music service, downloaded first and played from the phone’s memory.', dl:true, perf:NONE },
-      { name:'+ Face drawing', dl:true, perf:add(['face']) },
-      { name:'+ Visualizer and effects', dl:true, perf:add(['face', 'viz']) },
-      { name:'+ Lyrics following', dl:true, perf:add(['face', 'viz', 'lyrics']) },
-      { name:'+ Tilt parallax', dl:true, perf:add(['face', 'viz', 'lyrics', 'tilt']) },
-      { name:'+ Silent keep-alive loop', dl:true, perf:add(['face', 'viz', 'lyrics', 'tilt', 'keep']) },
-      { name:'+ Audio mode: everything on', note:'Everything the app normally does, with the song downloaded first.', dl:true, perf:ALL },
-      { name:'Everything on, song streamed', note:'The way songs played before downloads: streamed as they play.', dl:false, perf:ALL }
+      { name:'Plain file, app blanked', note:'The test page’s file, everything off, and the app not drawn at all (the screen goes dark): like the bare test page.', file:true, perf:NONE, blank:true },
+      { name:'Song downloaded, app blanked', note:'The same, with the song downloaded through the app.', dl:true, perf:NONE, blank:true },
+      { name:'App showing, no frosted glass', note:'Everything off, the app drawn, but without the blur behind its panels.', dl:true, perf:NONE, noGlass:true },
+      { name:'App showing, with frosted glass', note:'Everything off, the app drawn as usual.', dl:true, perf:NONE },
+      { name:'App showing, audio engines closed', note:'As before, with the page’s two Web Audio engines closed rather than paused.', dl:true, perf:NONE, closeAudio:true },
+      { name:'Everything on, phone locked', note:'Lock the phone now and listen. Unlock it after a minute or so, then answer.', dl:true, perf:ALL, lock:true }
     ];
     const fast = new URLSearchParams(location.search).get('cartest') === 'fast';   // for trying the test itself
-    const SECS = fast ? 12 : 75, MIN = fast ? 6 : 30;
+    const SECS = fast ? 12 : 60, MIN = fast ? 6 : 30;     // a step lasts at least MIN seconds, answered or not
     const box = $('carTest');
     let saved = null, item = null, fileUrl = null, n = -1, timer = 0, meter = 0, m = null, answer = null, results = [];
 
@@ -4331,7 +4337,7 @@ const music = (() => {
       $('ctResults').hidden = true; $('ctResults').replaceChildren();
       $('ctAsk').hidden = true; $('ctSkip').hidden = true; $('ctReady').hidden = false; $('ctClock').textContent = '';
       show('Guided CarPlay test', 'Connect to CarPlay, then tap Ready',
-           'One song plays through ' + STEPS.length + ' setups, about ' + SECS + ' seconds each. During each one, tap Smooth or Stutters. Your settings come back when it’s done. Have a passenger tap, or tap only when it’s safe.');
+           'One song plays through ' + STEPS.length + ' setups, ' + MIN + ' to ' + SECS + ' seconds each. During each one, tap Smooth or Stutters. Your settings come back when it’s done. Have a passenger tap, or tap only when it’s safe.');
       $('settings').classList.remove('open');
       box.hidden = false;
     }
@@ -4360,6 +4366,9 @@ const music = (() => {
       const s = STEPS[n];
       setPerf(s.perf);
       testDl = !!s.dl;
+      document.body.classList.toggle('ct-blank', !!s.blank);
+      document.body.classList.toggle('no-glass', !!s.noGlass);
+      if (s.closeAudio) closeAudioContexts();
       answer = null;
       for (const b of $('ctAsk').children) b.classList.remove('on');
       $('ctAsk').hidden = false; $('ctSkip').hidden = false;
@@ -4373,10 +4382,12 @@ const music = (() => {
       meter = setInterval(() => {
         const now = performance.now(), late = now - last - 100; last = now;
         const sec = Math.floor((now - t0) / 1000);
-        $('ctClock').textContent = Math.max(0, SECS - sec) + ' s';
+        $('ctClock').textContent = m ? Math.max(0, Math.ceil(SECS - (now - m.t) / 1000)) + ' s' : 'starting…';
         if (!m){ if (!el.paused && el.currentTime > 0.3) m = { t:now, ct:el.currentTime, stalls:0, worst:0, dry:0 }; }
         else if (late > 150){ m.stalls++; m.worst = Math.max(m.worst, Math.round(late)); }
-        if (sec >= SECS || (answer && sec >= MIN)) done();
+        // counted from when it's really playing; a song that never starts still moves on
+        const heard = m ? (now - m.t) / 1000 : 0;
+        if (!document.hidden && ((m && heard >= MIN && (answer || heard >= SECS)) || sec >= SECS + 20)) done();
       }, 100);
     }
     el.addEventListener('waiting', () => { if (m && !el.paused) m.dry++; });
@@ -4390,9 +4401,10 @@ const music = (() => {
       report('test-step', r);
       step(n + 1);
     }
+    function plain(){ document.body.classList.remove('ct-blank', 'no-glass'); }
     function finish(){
       clearInterval(meter);
-      testDl = null;
+      testDl = null; plain();
       setPerf(saved || { face:true, viz:true, lyrics:true, tilt:true, keep:true, session:true });
       pause();
       report('test-done', { results:results.map(r => r.step + ':' + r.answer + ':' + r.rate).join(' ') });
@@ -4410,7 +4422,7 @@ const music = (() => {
     }
     function close(){
       if (n >= 0 && n < STEPS.length){
-        clearInterval(meter); testDl = null;
+        clearInterval(meter); testDl = null; plain();
         setPerf(saved || { face:true, viz:true, lyrics:true, tilt:true, keep:true, session:true });
         pause();
         report('test-stopped', { at:n + 1, results:results.map(r => r.step + ':' + r.answer + ':' + r.rate).join(' ') });
@@ -4421,12 +4433,16 @@ const music = (() => {
       if (n < 0 || n >= STEPS.length) return;
       answer = a;
       for (const b of $('ctAsk').children) b.classList.toggle('on', b === (a === 'smooth' ? $('ctGood') : $('ctBad')));
-      $('ctNote').textContent = 'Got it: ' + (a === 'smooth' ? 'smooth' : 'stutters') + '. The next step starts shortly.';
+      $('ctNote').textContent = 'Got it: ' + (a === 'smooth' ? 'smooth' : 'stutters') + '. The next step starts after ' + MIN + ' seconds of this one.';
     };
     $('ctGood').onclick = mark('smooth');
     $('ctBad').onclick = mark('stutters');
     $('ctReady').onclick = ready;
-    $('ctSkip').onclick = () => { if (n >= 0 && n < STEPS.length) done(); };
+    $('ctSkip').onclick = () => {
+      if (n < 0 || n >= STEPS.length) return;
+      if (m && performance.now() - m.t >= MIN * 1000) done();
+      else $('ctNote').textContent = 'Give it at least ' + MIN + ' seconds, so the measurement means something.';
+    };
     $('ctStop').onclick = close;
     return { open };
   })();
