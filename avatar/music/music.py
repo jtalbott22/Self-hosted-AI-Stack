@@ -474,6 +474,15 @@ async def levels(tok: str):
 # --------------------------------------------------------------------------
 # HTTP
 # --------------------------------------------------------------------------
+@app.post("/log")
+async def page_log(request: Request):
+    """Playback reports from the page (refused plays, stalls, errors), so a
+    phone's problems show up in `docker logs music`."""
+    body = (await request.body())[:2000].decode("utf-8", "replace").replace("\n", " ")
+    print("page:", body, flush=True)
+    return Response(status_code=204)
+
+
 @app.get("/health")
 def health():
     return {"ok": True, "yt_dlp": yt_dlp.version.__version__}

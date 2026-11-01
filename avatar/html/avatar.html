@@ -316,20 +316,22 @@
      swells with the music, and drifting motes that spark off the beat */
   #mfBack{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
   #mfBg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(48px) saturate(1.3);opacity:.32}
-  #mfAura{position:absolute;inset:0;width:100%;height:100%;transform:scale(1.2);filter:blur(16px) saturate(1.35);opacity:0;transition:opacity .8s}
+  /* drawn tiny and stretched, which blurs it for free: no CSS filter to redo every frame */
+  #mfAura{position:absolute;inset:0;width:100%;height:100%;transform:scale(1.15);opacity:0;transition:opacity .8s}
   #mfSparks{position:absolute;inset:0;width:100%;height:100%}
   #mfBack::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%, rgba(8,11,15,.1), rgba(8,11,15,.55))}
   #musicFull.fx #mfTitle, #musicFull.fx #mfSub, #musicFull.fx #mfKind, #musicFull.fx #mfTime, #musicFull.fx #mfCredit{text-shadow:0 1px 3px rgba(0,0,0,.55),0 0 18px rgba(0,0,0,.45)}
   #musicFull.fx #mfSub{color:rgba(226,231,238,.78)}
   #musicFull.fx #mfAura{opacity:.55}
-  #musicFull.fx #mfBg{opacity:0}
+  #musicFull.fx #mfBg{display:none}
+  #mfGlow{will-change:opacity}
   #mfClose{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);left:12px;width:42px;height:42px;border-radius:50%;
     display:grid;place-items:center;background:rgba(25,33,44,.7)!important}
   #mfClose svg{width:22px;height:22px}
   #mfKind{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
   #mfArtBox{position:relative;width:min(72vw, 38dvh, 340px);aspect-ratio:1;flex:0 0 auto;will-change:transform;cursor:default}
   #mfGlow{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:18px;filter:blur(28px) saturate(1.8);
-    opacity:.35;transform:scale(1.04);will-change:transform,opacity;pointer-events:none}
+    opacity:.35;transform:scale(1.06);pointer-events:none}
   #mfArt{position:relative;width:100%;height:100%;display:block;object-fit:cover;border-radius:18px;background:var(--panel);
     box-shadow:0 24px 60px rgba(0,0,0,.55);flex:0 0 auto}
   #mfTitle{font-size:21px;font-weight:650;line-height:1.3;max-width:560px;overflow-wrap:anywhere}
@@ -579,6 +581,8 @@
   <select id="musicOn"><option value="on">On</option><option value="off">Off</option></select>
   <label for="musicUrl">Music server address</label>
   <input type="text" id="musicUrl">
+  <label for="musicFx">Now playing effects</label>
+  <select id="musicFx"><option value="auto">Automatic (lighter on phones)</option><option value="full">Full: moving colours, particles, sparks</option><option value="light">Light: the artwork moves and glows</option><option value="off">Off</option></select>
 
   <h3>Face</h3>
   <label for="avatarUrl">Avatar — a .glb, or a LAM .zip (blank uses the built-in head)</label>
@@ -675,6 +679,7 @@ const DEFAULTS = {
   lensUrl: proxied ? new URL('lens', location.href).href : 'http://localhost:8095',
   lensKey: '',
   musicOn: 'on',
+  musicFx: 'auto',
   musicUrl: proxied ? new URL('music', location.href).href : 'http://localhost:8704',
   callNameInput: 'Avatar',
   sysPrompt: 'You are a local voice assistant. Your replies are spoken aloud, so keep them short and conversational — usually one to three sentences. No markdown, no lists, no code blocks, no emoji. If something needs length, offer the short version first.'
@@ -2542,6 +2547,23 @@ const music = (() => {
   const cur = () => queue[idx] || null;
   const enabled = () => CFG.musicOn !== 'off';
 
+  /* What the audio element does, sent to the music service's log
+     (docker logs music), since a phone's console is out of reach: plays
+     that were refused, stalls, errors. A few dozen small reports at most. */
+  let reports = 0;
+  function report(ev, extra){
+    if (reports++ > 150 || !enabled()) return;
+    const it = cur();
+    const body = JSON.stringify({ ev, ...extra, title:it ? it.title.slice(0, 60) : '', kind:it ? it.kind : '',
+      t:+el.currentTime.toFixed(1), rs:el.readyState, ns:el.networkState, paused:el.paused, want, held, state,
+      fx:fxLevel(), lens:document.body.classList.contains('lens-music'), hidden:document.hidden });
+    try { navigator.sendBeacon(base() + '/log', new Blob([body], { type:'text/plain' })); } catch {}
+  }
+  ['playing', 'waiting', 'stalled', 'suspend', 'ended', 'emptied'].forEach(ev =>
+    el.addEventListener(ev, () => { if (el.src !== keepAlive.url()) report(ev); }));
+  el.addEventListener('error', () => { if (el.getAttribute('src') && el.src !== keepAlive.url())
+    report('error', { code:el.error && el.error.code, msg:el.error && String(el.error.message || '').slice(0, 120) }); });
+
   function prime(){
     if (primed || el.getAttribute('src')) return;
     primed = true;
@@ -2660,6 +2682,7 @@ const music = (() => {
     if (it.live && pausedAt && Date.now() - pausedAt > 10000) el.src = el.src;   // rejoin the live stream
     pausedAt = 0;
     el.play().catch(e => {
+      report('play-refused', { name:e.name, msg:String(e.message || '').slice(0, 120) });
       if (e.name === 'NotAllowedError'){
         want = false; paint();
         caption('', 'Tap ▶ on the music card to start the music. Your browser wants a tap first.');
@@ -2714,6 +2737,7 @@ const music = (() => {
      car. Show it as paused instead of looking like it's still playing. */
   el.addEventListener('pause', () => {
     if (el.ended || performance.now() - quietAt < 800 || !cur()) return;
+    report('paused-elsewhere');
     if (want){ want = false; paint(); }
   });
   /* Should be playing but isn't — most often the next song on an iPhone,
@@ -2995,6 +3019,11 @@ const music = (() => {
      floats, tilts a little and pulses with the bass. All of it calms down
      for "reduce motion". */
   const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+  const phone = matchMedia('(pointer: coarse)').matches;
+  /* Setup → Music → Now playing effects. Phones get the light set by
+     default: they're already drawing the avatar, and the full set (a
+     canvas wash and particles) is a lot more for the GPU. */
+  const fxLevel = () => { const v = CFG.musicFx || 'auto'; return v === 'auto' ? (phone ? 'light' : 'full') : v; };
   const DEF_PAL = [[127, 214, 196], [148, 124, 255], [255, 170, 96]];
   let pal = DEF_PAL, palFor = null, sprites = null;
   function readPalette(src){
@@ -3043,7 +3072,7 @@ const music = (() => {
   for (let i = 0, n = reduce.matches ? 24 : 64; i < n; i++)
     motes.push({ x:Math.random(), y:Math.random(), z:0.25 + Math.random() * 0.75, ph:Math.random() * 6.283, c:(Math.random() * 4) | 0 });
   function burst(power){
-    if (reduce.matches || full.classList.contains('list')) return;
+    if (reduce.matches || fxLevel() !== 'full' || full.classList.contains('list')) return;
     const fr = full.getBoundingClientRect(), ar = $('mfArtBox').getBoundingClientRect();
     if (!ar.width) return;
     const cx = ar.left - fr.left + ar.width / 2, cy = ar.top - fr.top + ar.height / 2, rad = ar.width * 0.45;
@@ -3054,9 +3083,8 @@ const music = (() => {
     }
   }
   const auraCv = $('mfAura'), sparkCv = $('mfSparks'), glow = $('mfGlow'), artBox = $('mfArtBox');
-  let auraAt = 0;
   function aura(t){
-    const W = Math.max(8, Math.round(full.clientWidth / 10)), H = Math.max(8, Math.round(full.clientHeight / 10));
+    const W = Math.max(6, Math.round(full.clientWidth / 24)), H = Math.max(6, Math.round(full.clientHeight / 24));
     if (auraCv.width !== W || auraCv.height !== H){ auraCv.width = W; auraCv.height = H; }
     const g = auraCv.getContext('2d'), art = $('mfArt'), m = Math.max(W, H);
     g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
@@ -3081,7 +3109,7 @@ const music = (() => {
     });
   }
   function particles(t, dt, still){
-    const s = surface(sparkCv, 1.5); if (!s) return;
+    const s = surface(sparkCv, phone ? 1 : 1.5); if (!s) return;
     const { g, w, h } = s, sp = getSprites(), speed = (still ? 0.3 : 1) * (0.35 + lvl.all * 2.4);
     g.globalCompositeOperation = 'lighter';
     for (const p of motes){
@@ -3105,7 +3133,17 @@ const music = (() => {
     }
     g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
   }
-  function fx(now, dt){
+  let fxAt = 0;
+  function fx(now){
+    const level = fxLevel();
+    if (level !== 'full' && sparkCv.width) sparkCv.width = 0;     // clear what the full set drew
+    if (level === 'off' || el.paused){                  // nothing moves while it's paused
+      if (level === 'off'){ artBox.style.transform = ''; glow.style.opacity = ''; }
+      return;
+    }
+    if (now - fxAt < 33) return;                        // 30 frames a second is plenty
+    const dt = fxAt ? Math.min(0.1, (now - fxAt) / 1000) : 1 / 30;
+    fxAt = now;
     const t = now / 1000, still = reduce.matches, k = still ? 0 : 1;
     if (!full.classList.contains('list')){
       artBox.style.transform = 'perspective(900px) rotateX(' + (Math.sin(t * 0.5) * 2.4 * k).toFixed(2) + 'deg) rotateY(' +
@@ -3114,7 +3152,8 @@ const music = (() => {
       glow.style.opacity = Math.min(1, 0.28 + lvl.all * 0.7 + lvl.beat * 0.2).toFixed(3);
       glow.style.transform = 'scale(' + (1.03 + lvl.bass * 0.12 + lvl.beat * 0.06).toFixed(4) + ')';
     }
-    if (now - auraAt > 33){ auraAt = now; aura(still ? 0 : t); }      // the blurred wash only needs ~30 fps
+    if (level !== 'full') return;
+    aura(still ? 0 : t);
     particles(t, dt, still);
   }
 
@@ -3140,9 +3179,9 @@ const music = (() => {
     summarize(now, dt);
     if (cardViz()) draw($('musicViz'), DEF_PAL[0], now);
     const fxv = fxOn();
-    full.classList.toggle('fx', fxv);
+    full.classList.toggle('fx', fxv && fxLevel() === 'full');
     if (fxv){
-      draw($('mfViz'), pal[0], now); fx(now, dt);
+      draw($('mfViz'), pal[0], now); fx(now);
       if (sparks.length || lvl.beat > 0.01) moving = true;
     }
     if (moving || !el.paused || now - modeAt < 1400) raf = requestAnimationFrame(frame);
@@ -3162,7 +3201,7 @@ const music = (() => {
   el.addEventListener('error', () => {
     const it = cur();
     if (!it || !el.getAttribute('src') || el.src === keepAlive.url()) return;
-    if (it.kind === 'music' && ++failures < 4 && next()) return;   // skip a song that won't play
+    if (it.kind === 'music' && ++failures < 4){ report('skip-after-error', { failures }); if (next()) return; }   // skip a song that won't play
     want = false; paint();
     showError('Couldn’t play “' + it.title + '”. ' + (it.live ? 'The station may be offline.' : 'Is the music service running?'));
   });

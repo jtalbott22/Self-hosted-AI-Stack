@@ -410,6 +410,7 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
   - The room moves with the music. Behind everything, the artwork and three glows in its colours swirl slowly and swell with the lows, mids and highs.
   - Motes drift up faster as the music gets louder, and sparks fly out from behind the artwork on the beat. The artwork floats, tilts slightly and pulses with the bass.
   - All of it runs off the same spectrum as the visualizer, so it never touches the audio itself. With **Reduce motion** turned on in the phone's settings, it stays still apart from the glow.
+  - **Setup → Music → Now playing effects** picks how much: **Full** (all of the above), **Light** (the artwork moves and glows; no colour wash or particles) or **Off**. **Automatic**, the default, is Full on computers and Light on phones, which are already drawing the avatar. Nothing moves while the music is paused.
 - **Queue.** The **Queue** button in full screen lists what's playing, what's up next (tap one to jump to it), and the last 50 things played in this browser (tap one to play it again; a song replays by its YouTube id, one request).
 - **Moving it.** Drag the card to any corner. The chat bubble moves the same way, by the grip at its top, to a corner or the top or bottom middle. Both remember where you put them.
 - **Back from the chat.** Whatever a reply opened stays with it in the chat as a chip: a Lens page or the music it started. Scroll back and tap the chip, or the exchange itself, to bring it back. A Lens page reopens as its tab, and music plays again or, if it's already playing, its tab comes to the front.
@@ -448,6 +449,7 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
 | The end of a reply is cut off before the mic opens again, in the car or on Bluetooth | Set **Setup → Listening → Speakers** to **Car** or **Bluetooth**. Wireless audio reaches the speakers a second or more after the page sends it, and opening the mic switches the phone's audio route, which drops whatever is still on its way |
 | "The music service isn't reachable" | `curl http://localhost:8702/music/health`. If that fails, `docker compose up -d --build music` and check `docker logs music` |
 | Radio and podcasts play but songs don't ("YouTube wouldn't play that") | Update yt-dlp: `docker compose build --no-cache music && docker compose up -d music` |
+| Songs show up but don't play, or skip on their own | `docker logs music \| grep page:` shows what the phone's audio element did: plays it refused (`play-refused`), stalls, errors with their codes, and skips after errors. If it only happens with the effects on, set **Now playing effects** to **Light** or **Off** |
 | Music won't start on an iPhone until you tap ▶ | iOS needs one tap on the page first. Tap the mic or ▶ once and voice requests work from then on |
 | Renderer fails to load | Check that `avatar/html/lib/lam-renderer.js` exists and has no `import` lines (`grep -c '^import'` prints 0) |
 
