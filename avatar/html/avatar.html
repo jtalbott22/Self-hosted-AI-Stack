@@ -3469,6 +3469,15 @@ const music = (() => {
       // the audio isn't being taken as fast as it should (it stutters)
       const rate = (el.currentTime - jank.ct) / ((now - jank.since) / 1000);
       report('perf', { stalls:jank.n, worst:jank.max, dry:jank.waits, rate:+rate.toFixed(2) });
+      // Well behind with plenty buffered and the page idle: iOS isn't taking the
+      // audio. On an iPhone over wireless CarPlay that state lasts until Safari
+      // restarts (the page can't reset it), so say so, once per song.
+      const it = cur();
+      if (it && rate < 0.85 && jank.waits <= 1 && el.readyState >= 2 && !it.live && it !== jank.told){
+        jank.told = it;
+        report('stuck-audio', { rate:+rate.toFixed(2) });
+        showError('Playback is stuttering: the phone’s audio is stuck, not the music. Swipe this app away (or close Safari) and open it again to fix it.');
+      }
       jank.n = jank.max = jank.waits = 0; jank.since = now; jank.ct = el.currentTime;
     }
   }, 100);
