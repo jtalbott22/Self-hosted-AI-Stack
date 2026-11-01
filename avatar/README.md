@@ -305,6 +305,7 @@ When the page is served over http or https, its defaults are paths **relative to
 | `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
 | `make/jobs` | Avatar maker on the host, `:8703` | New avatar from a photo (step 5) |
 | `music/search`, `music/more/...`, `music/stream/...`, `music/prefetch/...`, `music/levels/...`, `music/lyrics/...`, `music/log` | Music service, `music:8000` | Songs, radio and podcasts, the songs that follow, the visualizer, lyrics, and playback reports (step 6) |
+| `music/clip` | Music service, `music:8000` | The sound from a video for **Your own voice** |
 | `lib/lam-renderer.js` | Served file | LAM renderer (falls back to jsDelivr if missing) |
 | `avatars/<name>.zip` | Served file | Avatar bundles |
 | `avatar-config.json` | Served file, optional | Site-wide settings (below) |
@@ -348,7 +349,9 @@ Because the page calls its services relatively, Windows nginx has to proxy them 
 ### Your own voice
 
 **Setup → Your own voice** turns a recording of you into the avatar's voice. Record 20 seconds in the page (it shows lines to read), or choose any audio or video file the browser can play, such as a voice memo or a phone video.
-- The browser decodes the file, keeps the 28 seconds with the most talking, trims the quiet ends, evens out the level and sends Kokoro a 24 kHz WAV. Kokoro's voice tuner turns that into a voice in under a second.
+- A recording made in the page is taken straight from the mic, with the same settings as listening. On an iPhone the page switches the audio session to record first: it's kept in playback mode for music, and in that mode the mic only hears silence.
+- Videos, and any audio file the browser can't decode, are uploaded to the music service, whose ffmpeg sends back the sound (`music/clip`, up to 400 MB, the first five minutes). Phones can't decode every video on the page, an iPhone's HEVC `.mov` above all. Audio files the browser can read stay on the phone.
+- The page keeps the 28 seconds with the most talking, trims the quiet ends, evens out the level and sends Kokoro a 24 kHz WAV. Kokoro's voice tuner turns that into a voice in under a second.
 - **Hear it** has the avatar say a line in the new voice. Nothing is saved. **Use this voice** saves it on the server as `a_<name>_tuned` and makes it this browser's voice. Kokoro never overwrites a voice, so a name that's taken gets a number (`a_me2_tuned`). To go back, pick another voice in the **Voice** box, which lists your voices first.
 - It needs Kokoro-FastAPI 0.9.2 or newer with `ENABLE_INNO_TUNER=true` and `ALLOW_LOCAL_VOICE_SAVING=true`, and the `kokoro-voices` volume to keep saved voices across restarts (all in `docker-compose.yaml`). Docker fills the volume with Kokoro's own voices the first time it starts. To delete a voice: `docker exec kokoro rm /app/api/src/voices/v1_0/a_<name>_tuned.pt`.
 - It learns the voice's pitch and tone, not accent or every quirk. A quiet room and your normal voice matter more than length: 10 to 30 seconds of clean talking beats a minute with music or other people in the background. Saved voices speak American English.
@@ -481,7 +484,8 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
 | Speech starts a second or two after the reply text appears | The page sends the first few words to Kokoro as soon as there's a comma (or a joining word in a long opening), and doesn't wait on the phoneme lookup. The rest is the hardware: with llama's experts on the CPU (`--n-cpu-moe`), the model writes about 15 tokens a second, and Kokoro, also on the CPU, runs about half as fast while the model is writing. Kokoro on the GPU (`kokoro-fastapi-gpu`, under 1 GB of VRAM) or more of llama's expert layers on the GPU both help. A request that uses a tool ("play...") waits for two model replies before it speaks |
 | "Voice learning is turned off in Kokoro" or "Kokoro isn't allowed to keep voices" | Add `ENABLE_INNO_TUNER=true` and `ALLOW_LOCAL_VOICE_SAVING=true` to the kokoro service, then `docker compose up -d kokoro` |
 | A saved voice is gone after Kokoro was recreated | The `kokoro-voices` volume is missing from the kokoro service, so voices were saved inside the container |
-| "Couldn't read the sound in that file" | The browser can't decode it. Try an `.m4a`, `.mp3` or `.wav`, or record in the page |
+| "Couldn't read the sound in that file", or a video fails | Videos go through the music service: `curl http://localhost:8702/music/health`, and `docker logs music \| grep clip:` shows what ffmpeg said. A 404 means the music image predates `/clip`: `docker compose up -d --build music` |
+| A recording in the page says it was silent, or the level bar barely moves | Make sure no other app (a call, a voice memo) has the mic. On an iPhone, reload the page and tap **Record** again; the first tap may only get the permission prompt |
 | Renderer fails to load | Check that `avatar/html/lib/lam-renderer.js` exists and has no `import` lines (`grep -c '^import'` prints 0) |
 
 ## Credits

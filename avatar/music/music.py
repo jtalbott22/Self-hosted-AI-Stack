@@ -33,6 +33,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
@@ -730,6 +731,45 @@ async def page_log(request: Request):
     body = (await request.body())[:2000].decode("utf-8", "replace").replace("\n", " ")
     print("page:", body, flush=True)
     return Response(status_code=204)
+
+
+# ---- The sound from an uploaded recording ("Your own voice" in the page) ----
+CLIP_MAX = 400 << 20      # bytes; a minute of 4K phone video is about 400 MB
+CLIP_SECONDS = 300
+
+
+@app.post("/clip")
+async def clip_audio(request: Request):
+    """The sound of an uploaded audio or video file (raw request body) as 24 kHz
+    mono WAV, the first five minutes. Phones can't decode every video
+    themselves, and an HEVC .mov from an iPhone is the usual one."""
+    fd, name = tempfile.mkstemp(prefix="clip_")
+    src, out = Path(name), Path(name + ".wav")
+    try:
+        size = 0
+        with os.fdopen(fd, "wb") as f:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > CLIP_MAX:
+                    raise HTTPException(413, "That file is over 400 MB. Trim it, or record in the page.")
+                f.write(chunk)
+        if not size:
+            raise HTTPException(400, "The upload was empty.")
+        try:
+            p = await asyncio.to_thread(subprocess.run, [
+                "ffmpeg", "-loglevel", "error", "-y", "-i", str(src), "-map", "0:a:0", "-vn",
+                "-t", str(CLIP_SECONDS), "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", str(out)],
+                capture_output=True, text=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, "Reading that file took too long.")
+        if p.returncode or not out.exists() or out.stat().st_size < 4800:
+            print("clip: ffmpeg refused a", size, "byte upload:", p.stderr.strip()[-300:], flush=True)
+            raise HTTPException(415, "There's no sound in that file that the server can read.")
+        print(f"clip: {size >> 20} MB in, {out.stat().st_size / 48000:.0f} s of sound out", flush=True)
+        return Response(out.read_bytes(), media_type="audio/wav")
+    finally:
+        src.unlink(missing_ok=True)
+        out.unlink(missing_ok=True)
 
 
 @app.get("/health")

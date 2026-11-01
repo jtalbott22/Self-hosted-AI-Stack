@@ -1785,9 +1785,42 @@ const voiceMaker = (() => {
   let recorded = null, wav = null, wavFrom = null, busy = false, rec = null;
   const SAMPLE = 'Hi, it’s me. This is how I sound now. What would you like to talk about?';
 
-  /* Any file the browser can play, video included. Decoding at 24 kHz resamples it too. */
+  /* Audio files are decoded here (at 24 kHz, which resamples them too). Videos,
+     and anything the browser can't read, go to the music service, whose ffmpeg
+     sends back just the sound: phones can't decode every video, an iPhone's HEVC
+     .mov above all, and a whole video would sit in the phone's memory. */
+  const isVideo = f => /^video\//.test(f.type) || /\.(mov|mp4|m4v|3gp|webm|mkv|avi)$/i.test(f.name || '');
   async function decode(blob){
-    const data = await blob.arrayBuffer();
+    if (isVideo(blob)) return decodeData(await viaServer(blob));
+    try { return await decodeData(await blob.arrayBuffer()); }
+    catch { return decodeData(await viaServer(blob)); }
+  }
+  function viaServer(blob){
+    return new Promise((ok, no) => {
+      const x = new XMLHttpRequest();
+      x.open('POST', CFG.musicUrl.replace(/\/$/, '') + '/clip');
+      x.responseType = 'arraybuffer';
+      x.setRequestHeader('Content-Type', 'application/octet-stream');
+      const mb = (blob.size / 1048576).toFixed(0);
+      x.upload.onprogress = e => {
+        if (!e.lengthComputable) return;
+        bar.hidden = false; bar.max = 1; bar.value = e.loaded / e.total;
+        say(e.loaded < e.total ? 'Uploading the ' + (isVideo(blob) ? 'video' : 'recording') + ' (' + mb + ' MB)… ' + Math.round(100 * e.loaded / e.total) + '%'
+                               : 'Taking the sound out of it…');
+      };
+      x.onload = () => {
+        bar.hidden = true;
+        if (x.status === 200) return ok(x.response);
+        let m = ''; try { m = JSON.parse(new TextDecoder().decode(x.response)).detail; } catch {}
+        no(new Error(x.status === 404 ? 'the music service is too old to read videos. Rebuild it (docker compose up -d --build music).' :
+                     x.status === 413 && !m ? 'that file is too big to upload. Trim it, or record in the page.' :
+                     (m || 'the server couldn’t read it (' + x.status + ').')));
+      };
+      x.onerror = () => { bar.hidden = true; no(new Error('the music service isn’t reachable, and it’s what reads videos.')); };
+      x.send(blob);
+    });
+  }
+  async function decodeData(data){
     const ctx = new OfflineAudioContext(1, RATE, RATE);
     const buf = await new Promise((ok, no) => {
       const p = ctx.decodeAudioData(data, ok, no);
@@ -1810,7 +1843,7 @@ const voiceMaker = (() => {
       rms[f] = Math.sqrt(s / F);
     }
     const loud = [...rms].sort((a, b) => a - b)[Math.floor(nf * 0.9)] || 0;
-    const thr = Math.max(0.005, loud * 0.12);
+    const thr = Math.max(0.0003, loud * 0.12);           // relative: a quiet mic is still talking
     const on = Array.from(rms, r => r > thr ? 1 : 0);
     const talked = on.reduce((a, b) => a + b, 0) / 20;
     if (talked < 4) throw new Error(talked < 0.5 ? 'there’s no talking in that recording.' :
@@ -1829,7 +1862,7 @@ const voiceMaker = (() => {
     a = Math.max(0, a - 4); b = Math.min(nf, b + 4);         // a little room either side
     const y = x.slice(a * F, b * F);
     let peak = 0; for (const v of y) peak = Math.max(peak, Math.abs(v));
-    const g = peak > 0 ? Math.min(8, 0.9 / peak) : 1;
+    const g = peak > 0 ? Math.min(40, 0.9 / peak) : 1;
     for (let i = 0; i < y.length; i++) y[i] *= g;
     return { y, talked: Math.min(talked, KEEP), secs: y.length / RATE };
   }
@@ -1853,7 +1886,7 @@ const voiceMaker = (() => {
     say('Reading the recording…');
     let x;
     try { x = src.pcm || await decode(src); }
-    catch { throw new Error('couldn’t read the sound in that file. Try an audio file (m4a, mp3, wav) or record here.'); }
+    catch (e){ throw new Error(e && e.message && !/decod/i.test(e.message) ? e.message : 'couldn’t read the sound in that file. Try another file, or record here.'); }
     const p = pick(x);
     wav = toWav(p.y); wavFrom = src;
     return wav;
@@ -1936,30 +1969,33 @@ const voiceMaker = (() => {
   recBtn.onclick = async () => {
     if (rec){ rec.stop(); return; }
     if (busy) return;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();   // made inside the tap, so it may run
-    ctx.resume().catch(() => {});
     music.pause();
     setSession('play-and-record');
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:true, autoGainControl:false } });
+      // The same settings as listening. Turning the phone's voice processing off
+      // (no echo cancelling or auto gain) gives an iPhone's raw mic, which is far too quiet.
+      stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
     } catch {
-      setSession('playback'); ctx.close().catch(() => {});
+      setSession('playback');
       return say('The microphone isn’t available. Allow it in the browser, or choose a recording instead.', true);
     }
+    // Made once the mic is open, as for listening: on iOS a context made before
+    // it can be stuck on the old audio route and hear nothing.
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
     try { await ctx.resume(); } catch {}
     const src = ctx.createMediaStreamSource(stream);
     const proc = ctx.createScriptProcessor(4096, 1, 1), hush = ctx.createGain();
     hush.gain.value = 0;                               // it has to reach the speakers to run, silently
     src.connect(proc); proc.connect(hush); hush.connect(ctx.destination);
-    const parts = []; let level = 0, heard = 0;
+    const parts = []; let level = -90, heard = 0;
     proc.onaudioprocess = e => {
       const d = e.inputBuffer.getChannelData(0);
       parts.push(new Float32Array(d));
       let q = 0; for (let i = 0; i < d.length; i += 4) q += d[i] * d[i];
-      const r = Math.sqrt(q / (d.length / 4));
-      level = Math.max(r, level * 0.85);
-      if (r > 0.01) heard++;
+      const db = 10 * Math.log10(q / (d.length / 4) + 1e-10);
+      level = Math.max(db, level - 3);
+      if (db > -55) heard++;
     };
     const t0 = Date.now();
     bar.hidden = false; bar.max = REC_S; bar.value = 0; lvl.hidden = false;
@@ -1968,7 +2004,7 @@ const voiceMaker = (() => {
     let warned = false;
     const tick = setInterval(() => {
       const s = (Date.now() - t0) / 1000;
-      bar.value = s; lvl.value = Math.min(1, level * 6);
+      bar.value = s; lvl.value = clamp((level + 60) / 40);
       if (s > 4 && !heard && !warned){ warned = true; say('The microphone is sending silence. Check that nothing else is using it, then try again.', true); }
       if (s >= REC_S) rec.stop();
     }, 100);
