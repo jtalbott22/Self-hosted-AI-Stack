@@ -338,6 +338,15 @@ cp -r avatar/html/* /mnt/c/nginx/html/avatar/
 
 Because the page calls its services relatively, Windows nginx has to proxy them under the page's folder: `/avatar/llama/` → `127.0.0.1:8000/`, `/avatar/tts/` → `:8880/`, `/avatar/a2e/` → `:8701/`, `/avatar/stt/` → `:8090/`, `/avatar/lens/` → `:8095/`, and for the avatar maker `/avatar/make/` → `:8703/` with `client_max_body_size 16m`. Use the location blocks in `avatar/nginx-avatar.conf` as a template. Otherwise, set absolute addresses such as `http://localhost:8880/v1` in Setup; the services must then accept cross-origin requests.
 
+### Brute-force protection (authgate)
+
+If the page is reachable from the internet behind a password (nginx `auth_basic`), `authgate` bans addresses that keep guessing, like fail2ban but without nginx reloads. It's in `docker-compose.yaml` and listens on `127.0.0.1:8705`.
+
+- It follows nginx's error log (`NGINX_LOGS`, the folder that holds `error.log`) for failed logins. **5 failures in 15 minutes bans the address for an hour; another ban the same day lasts 24 hours.** LAN and loopback addresses are never banned. Bans survive restarts (the `authgate-data` volume).
+- nginx asks it about every request (`auth_request`), so a ban starts and ends at once. A banned address gets 403 even with the right password. If authgate is down, requests go on to the password as before.
+- `avatar/nginx-authgate.conf` has the three nginx pieces and why each is there. Behind a CDN such as CloudFront, nginx must take the visitor's address from `X-Forwarded-For` (CloudFront appends it last), and that's only safe when the server refuses requests that didn't come through the CDN. Otherwise every failure looks like it came from the CDN.
+- `curl http://localhost:8705/bans` lists bans, `curl -X POST "http://localhost:8705/unban?ip=1.2.3.4"` lifts one, and `docker logs -f authgate` shows failures and bans as they happen. `FAILS`, `WINDOW`, `BAN` and `REPEAT_BAN` (seconds) change the rules.
+
 ### Camera behind the face
 
 **Setup → Background** puts a camera behind the face: the rear camera on a phone makes the screen a window with the avatar standing in front of the room, or the front camera puts you behind it.

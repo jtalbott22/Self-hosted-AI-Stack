@@ -357,6 +357,20 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # Bans addresses that keep failing the avatar's password on the public
+  # nginx (see avatar/nginx-authgate.conf): follows nginx's error log, and
+  # nginx asks it about each request, so bans need no nginx reload.
+  authgate:
+    image: python:3.12-slim
+    container_name: authgate
+    command: ["python", "-u", "/app/authgate.py"]
+    volumes:
+      - ./avatar/authgate:/app:ro
+      - ${NGINX_LOGS:-/var/log/nginx}:/logs:ro
+      - authgate-data:/data
+    ports: ["127.0.0.1:8705:8705"]
+    restart: unless-stopped
+
 volumes:
   openwebui-data:
   pgdata:
@@ -364,3 +378,4 @@ volumes:
   sparkboard-data:
   music-cache:
   kokoro-voices:
+  authgate-data:
