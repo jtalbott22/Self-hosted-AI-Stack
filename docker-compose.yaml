@@ -131,9 +131,15 @@ services:
     command: npx -y playwright@1.60.0 run-server --port 3000 --host 0.0.0.0
     restart: unless-stopped
 
+  # Text-to-speech. On the GPU so the voice starts quickly: on the CPU it
+  # competes with llama's CPU-side experts and runs at half speed while the
+  # model is writing. Needs well under 1 GB of VRAM. For a machine without
+  # an NVIDIA GPU, use ghcr.io/remsky/kokoro-fastapi-cpu:latest and drop
+  # the runtime line.
   kokoro:
-    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
     container_name: kokoro
+    runtime: nvidia
     ports: ["8880:8880"]
     restart: unless-stopped
 
