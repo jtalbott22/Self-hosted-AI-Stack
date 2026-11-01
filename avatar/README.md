@@ -414,7 +414,11 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
 - **Lyrics.**
   - For songs, the service looks the lyrics up on [LRCLIB](https://lrclib.net/), a free, open lyrics database with no key, most of it timed line by line (`music/lyrics/...`). The artist and song are worked out from the YouTube title. Of the matches, the one closest in length to the video wins, so the timing lines up.
   - Under the title, three lines scroll by with the one being sung lit up. The same line also shows on the small card.
-  - Tap them, or **Lyrics**, for the whole song. Tap a line to play from there. If a video's intro throws the timing off, **Sooner** and **Later** nudge it by half a second.
+  - Tap them, or **Lyrics**, for the whole song. Tap a line to play from there. **Sooner** and **Later** nudge the timing by half a second.
+  - **Matched to the singing.** LRCLIB's timing is for the record, so a video with a skit before the song (or a pause in the middle) runs ahead of it. With `STT_URL` set on the music service, Speaches listens to each song in 30-second pieces, and the lines are slipped to where the words are actually sung, including a second slip after a pause in the middle.
+    - The first lines move about 10 seconds in; a whole song takes about 45 seconds of Speaches' CPU. While it listens, the credit reads "matching to the singing…".
+    - A song already on time stops after a few pieces. Results are kept with the lyrics, so a song is only heard once.
+    - It needs some lines it can make out: very fast rap, screaming, heavy effects or non-English songs may keep LRCLIB's timing. `docker logs music | grep lyrics:` shows what it heard. Leave `STT_URL` out to turn it off.
   - Songs with untimed lyrics only show them under **Lyrics**. Lookups are cached in the `music-cache` volume.
 - **Queue.** The **Queue** button in full screen lists what's playing, what's up next (tap one to jump to it), and the last 50 things played in this browser (tap one to play it again; a song replays by its YouTube id, one request).
 - **Moving it.** Drag the card to any corner. The chat bubble moves the same way, by the grip at its top, to a corner or the top or bottom middle. Both remember where you put them.

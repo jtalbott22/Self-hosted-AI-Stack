@@ -376,6 +376,8 @@
   #mfLyrLines div.on{color:#fff;transform:scale(1.05);text-shadow:0 0 18px rgba(255,255,255,.28),0 1px 3px rgba(0,0,0,.5)}
   #mfLyrLines div.gap{color:rgba(226,231,238,.3)}
   #mfLyrBar{display:none;align-items:center;justify-content:center;gap:14px;font-size:12.5px;color:var(--dim)}
+  #mfLyrBar button{white-space:nowrap;flex:none}
+  #mfLyrCredit{text-align:center}
   #mfLyrBar button{font-size:12.5px!important;padding:5px 10px!important;border-radius:999px;border:1px solid var(--line)!important;color:var(--dim)!important}
   #mfLyrBar a{color:var(--live);text-decoration:none}
   #musicFull.lyr #mfArtBox, #musicFull.lyr #mfViz, #musicFull.lyr #mfKind, #musicFull.lyr #mfSource{display:none}
@@ -3363,15 +3365,39 @@ const music = (() => {
   async function loadLyrics(it){
     lyr = null; lyrFor = it; lyrOff = 0; showLyrics();
     if (!it.lyrics) return;
+    const url = new URL(it.lyrics, base() + '/').href, wait = ms => new Promise(res => setTimeout(res, ms));
     for (let i = 0; i < 3 && lyrFor === it; i++){             // the service is sometimes busy: try again
       try {
-        const r = await fetch(new URL(it.lyrics, base() + '/').href);
+        const r = await fetch(url);
         if (r.ok){ const j = await r.json(); if (lyrFor === it && (j.lines || j.plain)) lyr = j; break; }
         if (r.status === 404) break;
       } catch {}
-      await new Promise(res => setTimeout(res, 5000));
+      await wait(5000);
     }
-    if (lyrFor === it) showLyrics();
+    if (lyrFor !== it) return;
+    showLyrics();
+    // The service is listening to the song to line the lyrics up with the
+    // singing; the lines move as it hears more (the first ones in ~10 s).
+    for (let i = 0; i < 40 && lyr && lyr.matched === 'listening'; i++){
+      await wait(6000);
+      if (lyrFor !== it) return;
+      try {
+        const r = await fetch(url); if (!r.ok) continue;
+        const j = await r.json();
+        if (lyrFor !== it) return;
+        const moved = JSON.stringify(j.lines) !== JSON.stringify(lyr.lines);
+        lyr = j;
+        if (moved) relyr(); else lyrCredit();
+      } catch {}
+    }
+  }
+  /* New times for the same lines: retime them in place, so the view (and
+     where they've scrolled to) stays put. */
+  function relyr(){
+    const kids = lyrLines.children;
+    if (!lyr.lines || kids.length !== lyr.lines.length){ showLyrics(); return; }
+    lyr.lines.forEach(([t, text], i) => { kids[i].dataset.t = t; kids[i].textContent = text || '♪'; kids[i].className = text ? '' : 'gap'; });
+    lyrCredit(); lyrIdx = -2; syncLyrics(true);
   }
   function showLyrics(){
     const timed = !!(lyr && lyr.lines), any = !!(lyr && (lyr.lines || lyr.plain));
@@ -3394,7 +3420,10 @@ const music = (() => {
   }
   function lyrCredit(){
     const o = Math.round(lyrOff * 10) / 10;
-    $('mfLyrCredit').textContent = 'Lyrics from LRCLIB' + (o ? ' · ' + (o > 0 ? o + ' s sooner' : -o + ' s later') : '');
+    const m = lyr && lyr.matched;
+    $('mfLyrCredit').textContent = (m === 'listening' ? 'LRCLIB · matching to the singing…' :
+      m === 'moved' ? 'LRCLIB · matched to the singing' : 'Lyrics from LRCLIB') +
+      (o ? ' · ' + (o > 0 ? o + ' s sooner' : -o + ' s later') : '');
   }
   function setLyr(on){
     full.classList.toggle('lyr', on); $('mfLyrBtn').setAttribute('aria-pressed', String(on));

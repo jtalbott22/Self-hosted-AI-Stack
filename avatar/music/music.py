@@ -7,6 +7,7 @@
     POST /prefetch/{token}[?warm=1]              -> get the next song ready
     GET /levels/{token}                          -> the visualizer's frames
     GET /lyrics/{token}                          -> a song's lyrics, timed when possible
+                                                    (and matched to the singing, with STT_URL)
 
 Sources, none of which need an account or a key:
     music    YouTube, through yt-dlp. The first hit is followed by its YouTube
@@ -34,6 +35,7 @@ import shutil
 import subprocess
 import time
 import xml.etree.ElementTree as ET
+from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote_plus
 from pathlib import Path
@@ -535,20 +537,187 @@ async def find_lyrics(title: str, channel: str, duration):
             "credit": "Lyrics from LRCLIB", "creditLink": "https://lrclib.net/"}
 
 
+# --------------------------------------------------------------------------
+# Matching the lyrics to the singing. LRCLIB's timing is for the record, so
+# a video with a skit before the song (or a pause in the middle) runs ahead
+# of it. Whisper (the speech-to-text service) listens to the song in 30 s
+# pieces; each lyric line is looked for in what it heard, and the lines are
+# slipped by however far they turn up from where LRCLIB put them. A pause in
+# the middle shows up as a second, larger slip from that line on.
+# Set STT_URL to an OpenAI-style speech-to-text service to turn it on.
+# --------------------------------------------------------------------------
+STT_URL = os.environ.get("STT_URL", "").rstrip("/")
+STT_MODEL = os.environ.get("STT_MODEL", "Systran/faster-whisper-small.en")
+PIECE = 30                        # seconds per piece; longer ones send Whisper into loops
+JITTER = 1.2                      # how far Whisper's word times wander
+SLIP_COST = 1.5                   # a change of slip needs about two lines behind it
+EARS = asyncio.Lock()             # one piece at a time: the speech service also hears the user
+HEARING: dict[str, asyncio.Task] = {}
+DEAF: dict[str, float] = {}       # songs whose listen failed, and when
+
+
+def words_of(s: str):
+    out = []
+    for w in re.sub(r"[’‘`]", "'", s.lower()).split():
+        w = re.sub(r"[^a-z0-9]", "", w)
+        if w.endswith("ing"):
+            w = w[:-1]                                   # lovin' = loving
+        if w:
+            out.append(w)
+    return out
+
+
+def spots(toks, heard, keep=8):
+    """Where a lyric line might be in what was heard: [(time, score)]."""
+    n, seq, found = len(toks), [w for w, _ in heard], []
+    for k, w in enumerate(seq):
+        if w not in toks[:3]:
+            continue                                     # a line is found by how it starts
+        sm = SequenceMatcher(None, toks, seq[k:k + n + 2], autojunk=False)
+        score = sum(b.size for b in sm.get_matching_blocks()) / n
+        if score >= 0.5:
+            found.append((heard[k][1] - 0.3 * toks.index(w), score))
+    found.sort(key=lambda c: -c[1])
+    picked = []
+    for c in found:
+        if all(abs(c[0] - p[0]) > 1.5 for p in picked):
+            picked.append(c)
+            if len(picked) >= keep:
+                break
+    return picked
+
+
+def match_lines(lines, heard):
+    """The slip for every line, or None when too little was heard to say.
+    Finds the best run of lines in order whose times keep rising, where
+    changing the slip costs something (so one stray match can't move it)."""
+    toks = [words_of(t) for _, t in lines]
+    cands = []
+    for (t, _), tk in zip(lines, toks):
+        cands.append([] if len(tk) < 2 else
+                     [(tm, s * min(1.0, len(tk) / 4), tm - t) for tm, s in spots(tk, heard)])
+    best = {}
+    for i, cs in enumerate(cands):
+        for c, (tm, s, off) in enumerate(cs):
+            top, prev = s, None
+            for j in range(max(0, i - 20), i):
+                for c2, (tm2, _, off2) in enumerate(cands[j]):
+                    if tm2 < tm - 0.2:
+                        v = best[(j, c2)][0] + s - (0 if abs(off - off2) < JITTER else SLIP_COST)
+                        if v > top:
+                            top, prev = v, (j, c2)
+            best[(i, c)] = (top, prev)
+    if not best:
+        return None
+    node, path = max(best, key=lambda k: best[k][0]), []
+    while node:
+        path.append((node[0], cands[node[0]][node[1]][2]))
+        node = best[node][1]
+    path.reverse()
+    if len(path) < max(4, 0.15 * len(lines)):
+        return None
+    runs = []                                            # stretches of lines that agree
+    for i, off in path:
+        if runs and abs(off - runs[-1]["at"]) < JITTER:
+            runs[-1]["offs"].append(off)
+        else:
+            runs.append({"first": i, "offs": [off]})
+        runs[-1]["at"] = sorted(runs[-1]["offs"])[len(runs[-1]["offs"]) // 2]
+    runs = [r for r in runs if len(r["offs"]) >= 2] or runs
+    slips, r = [], 0
+    for i in range(len(lines)):
+        while r + 1 < len(runs) and runs[r + 1]["first"] <= i:
+            r += 1
+        at = runs[r]["at"]
+        slips.append(0.0 if abs(at) < 0.5 else round(at, 2))   # under half a second: LRCLIB's own is better
+    return {"slips": slips, "matched": len(path), "runs": len(runs)}
+
+
+def piece(path: Path, start: int) -> bytes:
+    return subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", str(start), "-t", str(PIECE), "-i", str(path),
+                           "-ac", "1", "-ar", "16000", "-f", "wav", "-"],
+                          capture_output=True, check=True, timeout=60).stdout
+
+
+async def listen(vid: str, out: Path):
+    """Hear the song and save the slips into its lyrics file as they firm up."""
+    res = json.loads(out.read_text())
+    lines, length = res["lines"], res.get("duration") or 0
+    path = await yt_file(vid)
+    if not length:
+        p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                           capture_output=True, text=True)
+        length = float(p.stdout.strip() or 0)
+    heard = []
+    for start in range(0, int(length) + 1, PIECE):
+        wav = await asyncio.to_thread(piece, path, start)
+        if len(wav) < 16000:                             # under half a second left
+            break
+        async with EARS:
+            r = await http.post(f"{STT_URL}/audio/transcriptions", timeout=120,
+                                files={"file": ("piece.wav", wav, "audio/wav")},
+                                data={"model": STT_MODEL, "response_format": "verbose_json",
+                                      "timestamp_granularities[]": ["word"], "vad_filter": "false"})
+        r.raise_for_status()
+        for w in r.json().get("words") or []:
+            heard += [(t, start + w["start"]) for t in words_of(w["word"])]
+        m = match_lines(lines, heard)
+        last = start + PIECE >= length
+        # Already on time, and the video is the record's length, so no pause hides further on.
+        on_time = (m and m["matched"] >= 6 and m["runs"] == 1 and not any(m["slips"])
+                   and abs(length - (res.get("lyricsDuration") or 0)) < 3)
+        res["heard"] = {**(m or {}), "done": bool(last or on_time), "upto": start + PIECE}
+        out.write_text(json.dumps(res))
+        if last or on_time:
+            break
+    print("lyrics:", vid, "heard", res["heard"].get("matched", 0), "of", len(lines), "lines, slip",
+          sorted(set(res["heard"].get("slips") or [0])))
+
+
+def start_listening(vid: str, out: Path):
+    if not STT_URL or vid in HEARING or time.time() - DEAF.get(vid, 0) < 600:
+        return
+    task = asyncio.create_task(listen(vid, out))
+    HEARING[vid] = task
+
+    def done(t):
+        HEARING.pop(vid, None)
+        if t.exception():
+            DEAF[vid] = time.time()
+            print("lyrics:", vid, "couldn't listen:", repr(t.exception()))
+    task.add_done_callback(done)
+
+
+def as_heard(res: dict, vid: str) -> dict:
+    """The lyrics with the slips applied, and how the listening is going."""
+    h = res.get("heard") or {}
+    out = {k: v for k, v in res.items() if k != "heard"}
+    if res.get("lines") and h.get("slips"):
+        out["lines"] = sorted([round(t + s, 2), txt] for (t, txt), s in zip(res["lines"], h["slips"]))
+    out["matched"] = ("listening" if vid in HEARING else
+                      "" if not h.get("done") else
+                      "moved" if any(h.get("slips") or []) else
+                      "on time" if h.get("slips") else "")
+    return out
+
+
 @app.get("/lyrics/{tok}")
 async def lyrics(tok: str):
     t = TOKENS.get(tok)
     if not t or "meta" not in t:
         raise HTTPException(404, "No lyrics for that.")
-    out = LYRICS / f"{t['src']}.json"
+    vid, out = t["src"], LYRICS / f"{t['src']}.json"
     if out.exists() and (time.time() - out.stat().st_mtime < 7 * 86400 or out.stat().st_size > 60):
-        return Response(out.read_bytes(), media_type="application/json")
-    try:
-        res = await find_lyrics(*t["meta"])
-    except (httpx.HTTPError, ValueError):
-        raise HTTPException(502, "The lyrics service didn't answer.")
-    out.write_text(json.dumps(res))                 # misses are kept a week, then asked again
-    return res
+        res = json.loads(out.read_text())
+    else:
+        try:
+            res = await find_lyrics(*t["meta"])
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(502, "The lyrics service didn't answer.")
+        out.write_text(json.dumps(res))             # misses are kept a week, then asked again
+    if res.get("lines") and not (res.get("heard") or {}).get("done"):
+        start_listening(vid, out)
+    return as_heard(res, vid)
 
 
 # --------------------------------------------------------------------------

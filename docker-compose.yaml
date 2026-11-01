@@ -173,6 +173,13 @@ services:
       - music-cache:/cache        # downloaded songs, capped at CACHE_GB
     environment:
       - CACHE_GB=2
+      # Speaches listens to each song so the lyrics line up with the singing
+      # (videos with a skit first run ahead of LRCLIB's timing). Leave it
+      # out to use LRCLIB's timing as it is.
+      - STT_URL=http://host.docker.internal:8090/v1
+      - STT_MODEL=Systran/faster-whisper-small.en
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
   # ----------------------------------------------------------------
 
