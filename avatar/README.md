@@ -346,6 +346,12 @@ Because the page calls its services relatively, Windows nginx has to proxy them 
 - Phones run one camera at a time. A **Camera** call takes over: with the front camera behind the face, the call's picture is shared; with the rear one, the background comes back when the call ends.
 - The face is drawn with a transparent background, so the page's backdrop (or the camera) shows around it. Opening the Lens no longer re-renders the face at a new size: the face is always drawn for the whole window and is scaled and slid into the space above the sheet, in step with it.
 
+### Home-screen icon
+
+When you add the page to a phone's home screen (on an iPhone: Share → **Add to Home Screen**), its icon is a picture of the current face. A few seconds after a LAM face loads, the page copies one frame, crops a square around the head and sets it as the page's `apple-touch-icon` (and the browser tab's icon). It's remembered per avatar, so the next visit has it straight away.
+- The phone copies the icon when you add it. Changing the avatar later doesn't change an icon that's already on the home screen: remove it and add it again.
+- Only LAM faces make a picture. With any other face the phone uses its own default.
+
 ### Your own voice
 
 **Setup → Your own voice** turns a recording of you into the avatar's voice. Record 20 seconds in the page (it shows lines to read), or choose any audio or video file the browser can play, such as a voice memo or a phone video.

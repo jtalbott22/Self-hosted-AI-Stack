@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Avatar — local voice mode</title>
+<!-- Set by the page to a picture of the current face (see homeIcon). -->
+<link rel="apple-touch-icon" id="touchIcon">
+<link rel="icon" id="tabIcon">
 <style>
   :root{
     --ink:#0e1218; --ink-2:#141a23; --panel:#19212c; --line:#2b3543;
@@ -1482,7 +1485,9 @@ class Face {
         getChatState: () => ({ listening:'Listening', transcribing:'Thinking', thinking:'Thinking',
                                working:'Thinking', speaking:'Responding' }[state] || 'Idle'),
         // a fresh object each frame: the renderer scales values in place
-        getExpressionData: () => { const o = {}; for (const k of ARKIT_52) o[k] = this.lamExpr[k] || 0; return o; }
+        getExpressionData: () => { const o = {}; for (const k of ARKIT_52) o[k] = this.lamExpr[k] || 0;
+                                    if (this.eyesOpen) o.eyeBlinkLeft = o.eyeBlinkRight = 0;   // for the icon picture
+                                    return o; }
       });
       HTMLCanvasElement.prototype.getContext = getContext;
       if (!r) throw new Error(await Face.lamDiagnose(url));
@@ -1490,6 +1495,7 @@ class Face {
       try { r.viewer.renderer.setClearColor(0x000000, 0); } catch {}
       const cam = r.getCamera();
       if (cam){ this.lamCam = cam; this.lamOff = { x:0, y:0 }; this.frameLam(); setTimeout(() => this.frameLam(), 400); }
+      homeIcon.refresh();
     } catch (e){
       if (Face._getContext) HTMLCanvasElement.prototype.getContext = Face._getContext;
       showError('Couldn’t load the LAM avatar: ' + e.message);
@@ -1552,6 +1558,7 @@ class Face {
       // aim point sitting around the collar (about 0.65 face-heights below the
       // face's middle), plus any nudge from Setup.
       const facePx = 0.5 * (1 - covered) * zoom * H;
+      this.lamFacePx = facePx;
       const raise = clamp(parseFloat(CFG.faceRaise) || 0, -0.5, 0.5) * H;
       const shiftY = covered * H / 2 - 0.65 * facePx + raise;
       if (cam.setViewOffset){ cam.setViewOffset(W, H, 0, shiftY, W, H); cam.updateProjectionMatrix(); }
@@ -1563,6 +1570,53 @@ class Face {
       if (this.lamHome){ cam.position.copy(this.lamHome.pos); cam.quaternion.copy(this.lamHome.quat); }
       if (cam.clearViewOffset){ cam.clearViewOffset(); cam.updateProjectionMatrix(); }
     }
+  }
+
+  /* A square picture of the LAM face, for the home-screen icon. The renderer
+     doesn't keep its frames, so the next frame is copied the moment it's drawn
+     (a microtask after its draw calls, before the browser shows it). The head
+     is found by projecting the point the camera aims at (the collar), which
+     still works with the phone-tilt parallax swinging the camera. */
+  async snapshot(size = 180){
+    const rr = this.lam && this.lam.viewer && this.lam.viewer.renderer;
+    if (!rr || !this.lamCam || !this.lamTarget || !this.lamFacePx) return null;
+    this.eyesOpen = true;                                // not caught mid-blink
+    await new Promise(r => setTimeout(r, 250));
+    return new Promise(ok => {
+      const cam = this.lamCam, aim = this.lamTarget, facePx = this.lamFacePx;
+      if (!cam || !aim){ this.eyesOpen = false; return ok(null); }
+      const draw = rr.render; let queued = false;
+      const done = v => { rr.render = draw; this.eyesOpen = false; clearTimeout(late); ok(v); };
+      const late = setTimeout(() => done(null), 3000);
+      rr.render = function(...a){
+        const out = draw.apply(this, a);
+        if (!queued){
+          queued = true;
+          queueMicrotask(() => {
+            let url = null;
+            try {
+              const src = rr.domElement, W = src.clientWidth || innerWidth, H = src.clientHeight || innerHeight;
+              const k = src.width / W, p = aim.clone().project(cam);
+              const cx = (p.x + 1) / 2 * W, cy = (1 - p.y) / 2 * H - 0.68 * facePx;  // a little above the middle of the face
+              const side = 1.8 * facePx;                                       // room for hair, and for iOS rounding the corners
+              const c = document.createElement('canvas'); c.width = c.height = size;
+              const g = c.getContext('2d');
+              const bg = g.createRadialGradient(size / 2, size * 0.1, 0, size / 2, size * 0.1, size * 1.1);
+              bg.addColorStop(0, '#1b2430'); bg.addColorStop(0.62, '#0e1218'); bg.addColorStop(1, '#0e1218');
+              g.fillStyle = bg; g.fillRect(0, 0, size, size);
+              g.drawImage(src, (cx - side / 2) * k, (cy - side / 2) * k, side * k, side * k, 0, 0, size, size);
+              // a frame that came out empty (the face not drawn yet) is just the backdrop
+              const d = g.getImageData(size * 0.3, size * 0.3, size * 0.4, size * 0.4).data;
+              let m = 0, q = 0, n = d.length / 4;
+              for (let i = 0; i < d.length; i += 4){ const v = d[i] + d[i + 1] + d[i + 2]; m += v; q += v * v; }
+              if (Math.sqrt(q / n - (m / n) ** 2) > 12) url = c.toDataURL('image/png');
+            } catch {}
+            done(url);
+          });
+        }
+        return out;
+      };
+    });
   }
 
   /* Parallax for LAM: swing its camera around its target by the change in tilt,
@@ -1671,6 +1725,30 @@ const tilt = (() => {
 })();
 
 const lipsync = new LipSync();
+/* Home-screen icon: a picture of the current face. iOS reads apple-touch-icon
+   when you tap Add to Home Screen, so it's set ahead of time and remembered
+   per avatar for the next visit. An icon already on the home screen keeps the
+   picture it was added with; remove it and add it again to pick up a new face. */
+const homeIcon = (() => {
+  const KEY = 'avatarIcon';
+  const set = png => { $('touchIcon').href = png; $('tabIcon').href = png; };
+  try { const j = JSON.parse(localStorage.getItem(KEY) || 'null'); if (j && j.url === CFG.avatarUrl && j.png) set(j.png); } catch {}
+  let gen = 0;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  async function refresh(){
+    const my = ++gen, url = face.url;
+    await wait(2500);                                  // framed and settled
+    for (let i = 0; i < 6 && my === gen && face.url === url; i++){
+      if (document.visibilityState === 'visible' && face.lam){
+        const png = await face.snapshot();
+        if (my !== gen || face.url !== url) return;
+        if (png){ set(png); try { localStorage.setItem(KEY, JSON.stringify({ url, png })); } catch {} return; }
+      }
+      await wait(3000);
+    }
+  }
+  return { refresh };
+})();
 const face = new Face($('faceLayer'));
 
 /* Fit the face into the stage. The face is framed for the whole window, so
