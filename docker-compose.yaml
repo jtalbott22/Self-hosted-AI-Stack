@@ -141,6 +141,15 @@ services:
     container_name: kokoro
     runtime: nvidia
     ports: ["8880:8880"]
+    # Your own voice: the avatar page's Setup sends a recording to
+    # /dev/tune, which learns a voice from it and saves it as
+    # a_<name>_tuned. The volume keeps saved voices; on first start Docker
+    # fills it with Kokoro's own voices from the image.
+    environment:
+      - ENABLE_INNO_TUNER=true
+      - ALLOW_LOCAL_VOICE_SAVING=true
+    volumes:
+      - kokoro-voices:/app/api/src/voices/v1_0
     restart: unless-stopped
 
   # ----------------------------------------------------------------
@@ -354,3 +363,4 @@ volumes:
   open-terminal:
   sparkboard-data:
   music-cache:
+  kokoro-voices:

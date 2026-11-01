@@ -299,6 +299,7 @@ When the page is served over http or https, its defaults are paths **relative to
 | `llama/v1` + `/chat/completions` | llama.cpp, `llama:8000` | Replies (streamed) |
 | `tts/v1` + `/audio/speech` | Kokoro, `kokoro:8880` | Reply audio |
 | `tts/dev/captioned_speech`, `tts/dev/phonemize` | Kokoro, `kokoro:8880` | Word timings and phonemes for the built-in lip-sync |
+| `tts/dev/tune`, `tts/v1/audio/voices` | Kokoro, `kokoro:8880` | Your own voice, and the list of voices in Setup |
 | `a2e/a2e` | A2E on the host, `:8701` | Lip-sync model (lip-sync mode `a2e`, LAM avatars only) |
 | `stt/v1/audio/transcriptions` | Speaches on the host, `:8090` | Voice input |
 | `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
@@ -343,6 +344,15 @@ Because the page calls its services relatively, Windows nginx has to proxy them 
 - The video stays in the browser: it isn't recorded or sent anywhere. A camera needs HTTPS (or `localhost`).
 - Phones run one camera at a time. A **Camera** call takes over: with the front camera behind the face, the call's picture is shared; with the rear one, the background comes back when the call ends.
 - The face is drawn with a transparent background, so the page's backdrop (or the camera) shows around it. Opening the Lens no longer re-renders the face at a new size: the face is always drawn for the whole window and is scaled and slid into the space above the sheet, in step with it.
+
+### Your own voice
+
+**Setup → Your own voice** turns a recording of you into the avatar's voice. Record 20 seconds in the page (it shows lines to read), or choose any audio or video file the browser can play, such as a voice memo or a phone video.
+- The browser decodes the file, keeps the 28 seconds with the most talking, trims the quiet ends, evens out the level and sends Kokoro a 24 kHz WAV. Kokoro's voice tuner turns that into a voice in under a second.
+- **Hear it** has the avatar say a line in the new voice. Nothing is saved. **Use this voice** saves it on the server as `a_<name>_tuned` and makes it this browser's voice. Kokoro never overwrites a voice, so a name that's taken gets a number (`a_me2_tuned`). To go back, pick another voice in the **Voice** box, which lists your voices first.
+- It needs Kokoro-FastAPI 0.9.2 or newer with `ENABLE_INNO_TUNER=true` and `ALLOW_LOCAL_VOICE_SAVING=true`, and the `kokoro-voices` volume to keep saved voices across restarts (all in `docker-compose.yaml`). Docker fills the volume with Kokoro's own voices the first time it starts. To delete a voice: `docker exec kokoro rm /app/api/src/voices/v1_0/a_<name>_tuned.pt`.
+- It learns the voice's pitch and tone, not accent or every quirk. A quiet room and your normal voice matter more than length: 10 to 30 seconds of clean talking beats a minute with music or other people in the background. Saved voices speak American English.
+- **Who can use it.** Anyone who can reach Kokoro can save voices. Port 8880 and the page's `tts/` path should stay on your LAN or behind a login. If another proxy forwards `/tts/` to Kokoro without a login, block `/tts/dev/tune` there.
 
 ## 5. Make avatars from the page (optional)
 
@@ -469,6 +479,9 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
 | Songs show up but don't play, or skip on their own | `docker logs music \| grep page:` shows what the phone's audio element did: plays it refused (`play-refused`), stalls, errors with their codes, and skips after errors. If it only happens with the effects on, set **Now playing effects** to **Light** or **Off** |
 | Music won't start on an iPhone until you tap ▶ | iOS needs one tap on the page first. Tap the mic or ▶ once and voice requests work from then on |
 | Speech starts a second or two after the reply text appears | The page sends the first few words to Kokoro as soon as there's a comma (or a joining word in a long opening), and doesn't wait on the phoneme lookup. The rest is the hardware: with llama's experts on the CPU (`--n-cpu-moe`), the model writes about 15 tokens a second, and Kokoro, also on the CPU, runs about half as fast while the model is writing. Kokoro on the GPU (`kokoro-fastapi-gpu`, under 1 GB of VRAM) or more of llama's expert layers on the GPU both help. A request that uses a tool ("play...") waits for two model replies before it speaks |
+| "Voice learning is turned off in Kokoro" or "Kokoro isn't allowed to keep voices" | Add `ENABLE_INNO_TUNER=true` and `ALLOW_LOCAL_VOICE_SAVING=true` to the kokoro service, then `docker compose up -d kokoro` |
+| A saved voice is gone after Kokoro was recreated | The `kokoro-voices` volume is missing from the kokoro service, so voices were saved inside the container |
+| "Couldn't read the sound in that file" | The browser can't decode it. Try an `.m4a`, `.mp3` or `.wav`, or record in the page |
 | Renderer fails to load | Check that `avatar/html/lib/lam-renderer.js` exists and has no `import` lines (`grep -c '^import'` prints 0) |
 
 ## Credits

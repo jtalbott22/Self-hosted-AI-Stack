@@ -267,7 +267,9 @@
   p.note.warn{color:#e8b84b;display:none}
   #settings input[type=file]{width:100%;color:var(--text);font-size:13px}
   #makerBar:not([hidden]){display:block;width:100%;height:8px;margin-top:14px;accent-color:var(--live)}
-  #makerStatus.bad{color:#e8b84b}
+  #makerStatus.bad,#voiceStatus.bad{color:#e8b84b}
+  #voiceBar:not([hidden]){display:block;width:100%;height:8px;margin-top:14px;accent-color:#e05a5a}
+  #voiceScript{font-style:italic}
   #makerPreview:not([hidden]){display:block;width:128px;border-radius:8px;margin-top:8px}
   body.keys-on #exportKeysNote{display:block}
   .row button:hover{border-color:#3d4a5c}
@@ -593,7 +595,8 @@
   <label for="ttsBase">Kokoro API</label>
   <input type="text" id="ttsBase">
   <label for="ttsVoice">Voice</label>
-  <input type="text" id="ttsVoice">
+  <input type="text" id="ttsVoice" list="voiceList" autocomplete="off">
+  <datalist id="voiceList"></datalist>
   <label for="ttsSpeed">Speed</label>
   <input type="text" id="ttsSpeed">
   <label for="lipMode">Lip sync</label>
@@ -670,6 +673,18 @@
   <img id="makerPreview" alt="The face crop the new avatar was made from" hidden>
   <label for="makerUrl">Avatar maker address</label>
   <input type="text" id="makerUrl">
+
+  <h3>Your own voice</h3>
+  <p class="note">Kokoro can learn a voice from a short clip of one person talking. Record yourself here, or choose an audio or video file. Your server uses up to 30 seconds of it. A quiet room and your normal speaking voice work best. Music or other voices in the background will make it sound worse.</p>
+  <p class="note" id="voiceScript">Read this out loud: “Hi, this is me, talking the way I usually do. Yesterday I went for a walk, grabbed a coffee and called an old friend. We laughed about the weather, made plans for the weekend, and I promised to bring the snacks. Honestly, it was a pretty good day.”</p>
+  <div class="row"><button id="voiceRec">Record (20 s)</button></div>
+  <label for="voiceFile">Or choose a recording</label>
+  <input type="file" id="voiceFile" accept="audio/*,video/*">
+  <label for="voiceName">Name (letters and digits)</label>
+  <input type="text" id="voiceName" maxlength="24" autocomplete="off" placeholder="me">
+  <div class="row"><button id="voiceTry">Hear it</button><button id="voiceUse" class="primary">Use this voice</button></div>
+  <progress id="voiceBar" max="20" value="0" hidden></progress>
+  <p class="note" id="voiceStatus"></p>
   <div class="peekable">
   <h3>Background</h3>
   <p class="note">Put a camera behind the face. On a phone, the rear camera turns the screen into a window with the avatar standing in front of the room. The picture stays on this device: it isn’t recorded or sent anywhere.</p>
@@ -1750,6 +1765,220 @@ face.load(CFG.avatarUrl);
       busy = false; btn.disabled = false; bar.hidden = true;
     }
   };
+})();
+
+/* ================================================================== *
+ * Your own voice — a recording (made here, or any audio or video file)
+ * becomes a Kokoro voice. The browser decodes it, keeps the best 28 s
+ * of talking and sends a 24 kHz WAV to Kokoro's /dev/tune, which needs
+ * ENABLE_INNO_TUNER (and ALLOW_LOCAL_VOICE_SAVING to keep the voice).
+ * "Hear it" speaks a sample without saving anything.
+ * ================================================================== */
+const voiceMaker = (() => {
+  const RATE = 24000, KEEP = 28, REC_S = 20;
+  const st = $('voiceStatus'), bar = $('voiceBar'), recBtn = $('voiceRec');
+  const say = (text, bad = false) => { st.textContent = text; st.classList.toggle('bad', bad); };
+  const slug = s => s.toLowerCase().replace(/\.[^.]*$/, '').replace(/[^a-z0-9]+/g, '_')
+                     .replace(/^_+|_+$/g, '').slice(0, 24);
+  let recorded = null, wav = null, wavFrom = null, busy = false, rec = null;
+  const SAMPLE = 'Hi, it’s me. This is how I sound now. What would you like to talk about?';
+
+  /* Any file the browser can play, video included. Decoding at 24 kHz resamples it too. */
+  async function decode(blob){
+    const data = await blob.arrayBuffer();
+    const ctx = new OfflineAudioContext(1, RATE, RATE);
+    const buf = await new Promise((ok, no) => {
+      const p = ctx.decodeAudioData(data, ok, no);
+      if (p && p.then) p.then(ok, no);
+    });
+    const n = buf.length, mono = new Float32Array(n);
+    for (let c = 0; c < buf.numberOfChannels; c++){
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels;
+    }
+    return mono;
+  }
+
+  /* The KEEP-second stretch with the most talking in it, trimmed of the quiet at
+     either end and brought up to a steady level. */
+  function pick(x){
+    const F = RATE / 20, nf = Math.floor(x.length / F), rms = new Float32Array(nf);
+    for (let f = 0; f < nf; f++){
+      let s = 0; for (let i = f * F; i < (f + 1) * F; i++) s += x[i] * x[i];
+      rms[f] = Math.sqrt(s / F);
+    }
+    const loud = [...rms].sort((a, b) => a - b)[Math.floor(nf * 0.9)] || 0;
+    const thr = Math.max(0.005, loud * 0.12);
+    const on = Array.from(rms, r => r > thr ? 1 : 0);
+    const talked = on.reduce((a, b) => a + b, 0) / 20;
+    if (talked < 4) throw new Error(talked < 0.5 ? 'there’s no talking in that recording.' :
+      'only about ' + talked.toFixed(1) + ' s of talking. It needs at least 4 seconds, and 10 to 30 is better.');
+    let a = on.indexOf(1), b = on.lastIndexOf(1) + 1;
+    const W = KEEP * 20;
+    if (b - a > W){
+      let s = 0, best = -1, at = a;
+      for (let f = a; f < a + W; f++) s += on[f];
+      for (let f = a; f + W <= b; f++){
+        if (s > best){ best = s; at = f; }
+        s += (on[f + W] || 0) - on[f];
+      }
+      a = at; b = at + W;
+    }
+    a = Math.max(0, a - 4); b = Math.min(nf, b + 4);         // a little room either side
+    const y = x.slice(a * F, b * F);
+    let peak = 0; for (const v of y) peak = Math.max(peak, Math.abs(v));
+    const g = peak > 0 ? Math.min(8, 0.9 / peak) : 1;
+    for (let i = 0; i < y.length; i++) y[i] *= g;
+    return { y, talked: Math.min(talked, KEEP), secs: y.length / RATE };
+  }
+
+  function toWav(y){
+    const b = new DataView(new ArrayBuffer(44 + y.length * 2));
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) b.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); b.setUint32(4, 36 + y.length * 2, true); str(8, 'WAVEfmt ');
+    b.setUint32(16, 16, true); b.setUint16(20, 1, true); b.setUint16(22, 1, true);
+    b.setUint32(24, RATE, true); b.setUint32(28, RATE * 2, true);
+    b.setUint16(32, 2, true); b.setUint16(34, 16, true); str(36, 'data');
+    b.setUint32(40, y.length * 2, true);
+    for (let i = 0; i < y.length; i++) b.setInt16(44 + i * 2, Math.max(-1, Math.min(1, y[i])) * 32767, true);
+    return new Blob([b], { type:'audio/wav' });
+  }
+
+  async function clip(){
+    const src = $('voiceFile').files[0] || recorded;
+    if (!src) throw new Error('record yourself or choose a recording first.');
+    if (src === wavFrom) return wav;
+    say('Reading the recording…');
+    let x;
+    try { x = await decode(src); }
+    catch { throw new Error('couldn’t read the sound in that file. Try an audio file (m4a, mp3, wav) or record here.'); }
+    const p = pick(x);
+    wav = toWav(p.y); wavFrom = src;
+    return wav;
+  }
+
+  async function tune(form){
+    const root = kokoroRoot();
+    for (let tries = 0; ; tries++){
+      const r = await fetch(root + '/dev/tune', { method:'POST', body: form });
+      if (r.ok) return r;
+      let j = {}; try { j = await r.json(); } catch {}
+      const d = j.detail || {}, m = typeof d === 'string' ? d : d.message || '';
+      if (r.status === 503 && /busy/.test(m) && tries < 5){ await new Promise(ok => setTimeout(ok, 800)); continue; }
+      const e = new Error(
+        r.status === 404 ? 'this Kokoro can’t learn voices. It needs Kokoro-FastAPI 0.9.2 or newer.' :
+        r.status === 403 && /tuner/i.test(m) ? 'voice learning is turned off in Kokoro. Set ENABLE_INNO_TUNER=true on the kokoro service.' :
+        r.status === 403 && /saving/i.test(m) ? 'Kokoro isn’t allowed to keep voices. Set ALLOW_LOCAL_VOICE_SAVING=true on the kokoro service.' :
+        (m || 'Kokoro said ' + r.status) + '.');
+      e.status = r.status;
+      throw e;
+    }
+  }
+
+  const guard = fn => async () => {
+    if (busy) return;
+    busy = true; $('voiceTry').disabled = $('voiceUse').disabled = true;
+    try { await fn(); }
+    catch (e){ say('Couldn’t make the voice: ' + (e instanceof TypeError ? 'Kokoro isn’t reachable.' : e.message), true); }
+    finally { busy = false; $('voiceTry').disabled = $('voiceUse').disabled = false; }
+  };
+
+  /* A sample in the new voice, spoken by the avatar. Nothing is kept. */
+  $('voiceTry').onclick = () => {
+    lipsync.unlock();
+    guard(async () => {
+      const w = await clip();
+      say('Learning the voice…');
+      const f = new FormData();
+      f.append('audio', w, 'voice.wav');
+      f.append('request', JSON.stringify({ model:'kokoro', input:SAMPLE, response_format:'mp3',
+        speed:parseFloat(CFG.ttsSpeed) || 1 }));
+      const data = await (await tune(f)).arrayBuffer();
+      stopSpeaking(); caption('', SAMPLE);
+      queue.push({ text:SAMPLE, gen:generation, force:true,
+                   job: Promise.resolve({ data, timeline:null }).then(withA2E) });
+      if (!draining) drain();
+      say('That’s the sample (' + (w.size / 2 / RATE).toFixed(0) + ' s of the recording used). If you like it, tap Use this voice.');
+    })();
+  };
+
+  /* Kept on the server as a_<name>_tuned and chosen as this browser's voice.
+     Kokoro never overwrites a voice, so a name that's taken gets a number. */
+  $('voiceUse').onclick = () => {
+    lipsync.unlock();
+    guard(async () => {
+      const base = slug($('voiceName').value) || 'me';
+      $('voiceName').value = base;
+      const w = await clip();
+      say('Learning and saving the voice…');
+      let voice = null;
+      for (let n = 1; n <= 20 && !voice; n++){
+        const f = new FormData();
+        f.append('audio', w, 'voice.wav');
+        f.append('save_voice', 'a_' + base + (n > 1 ? n : ''));
+        try { voice = (await (await tune(f)).json()).voice; }
+        catch (e){ if (e.status !== 409) throw e; }
+      }
+      if (!voice) throw new Error('every name from ' + base + ' to ' + base + '20 is taken. Pick another name.');
+      CFG.ttsVoice = voice; $('ttsVoice').value = voice; saveLocal();
+      await voices.refresh();
+      say('Saved as “' + voice + '” and chosen as the voice. Pick another under Voice to switch back.');
+      stopSpeaking(); caption('', SAMPLE); enqueue(SAMPLE, true);
+    })();
+  };
+
+  /* Record here: REC_S seconds, or tap again to stop sooner. */
+  recBtn.onclick = async () => {
+    if (rec){ rec.stop(); return; }
+    if (busy) return;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:true, autoGainControl:false } });
+    } catch { return say('The microphone isn’t available. Allow it in the browser, or choose a recording instead.', true); }
+    music.pause();
+    const chunks = [], mr = new MediaRecorder(stream);
+    rec = mr;
+    const t0 = Date.now();
+    bar.hidden = false; bar.max = REC_S; bar.value = 0;
+    recBtn.textContent = 'Stop';
+    say('Recording. Read the lines above in your normal voice.');
+    const tick = setInterval(() => {
+      const s = (Date.now() - t0) / 1000;
+      bar.value = s;
+      if (s >= REC_S && mr.state === 'recording') mr.stop();
+    }, 200);
+    mr.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    mr.onstop = () => {
+      clearInterval(tick); rec = null;
+      stream.getTracks().forEach(t => t.stop());
+      bar.hidden = true; recBtn.textContent = 'Record again (20 s)';
+      recorded = new Blob(chunks, { type: mr.mimeType || chunks[0]?.type || 'audio/webm' });
+      $('voiceFile').value = '';
+      say('Recorded ' + ((Date.now() - t0) / 1000).toFixed(0) + ' s. Tap Hear it to try the voice.');
+    };
+    mr.start(250);
+  };
+  $('voiceFile').onchange = e => {
+    const f = e.target.files[0];
+    if (f && !$('voiceName').value.trim()) $('voiceName').value = slug(f.name);
+    if (f) say('');
+  };
+
+  /* Suggestions for the Voice box: your saved voices first, then Kokoro's own. */
+  const voices = {
+    done: false,
+    async refresh(){
+      try {
+        const j = await (await fetch(CFG.ttsBase.replace(/\/$/, '') + '/audio/voices')).json();
+        const names = (j.voices || []).map(v => typeof v === 'string' ? v : v.id || v.name).filter(Boolean);
+        names.sort((a, b) => (b.endsWith('_tuned') - a.endsWith('_tuned')) || a.localeCompare(b));
+        $('voiceList').replaceChildren(...names.map(n => Object.assign(document.createElement('option'), { value:n })));
+        this.done = true;
+      } catch {}
+    }
+  };
+  $('cfgBtn').addEventListener('click', () => { if (!voices.done) voices.refresh(); });
+  return { voices };
 })();
 
 /* ================================================================== *
