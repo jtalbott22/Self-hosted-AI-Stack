@@ -269,6 +269,7 @@
   #makerBar:not([hidden]){display:block;width:100%;height:8px;margin-top:14px;accent-color:var(--live)}
   #makerStatus.bad,#voiceStatus.bad{color:#e8b84b}
   #voiceBar:not([hidden]){display:block;width:100%;height:8px;margin-top:14px;accent-color:#e05a5a}
+  #voiceLvl:not([hidden]){display:block;width:100%;height:5px;margin-top:6px;accent-color:var(--live)}
   #voiceScript{font-style:italic}
   #makerPreview:not([hidden]){display:block;width:128px;border-radius:8px;margin-top:8px}
   body.keys-on #exportKeysNote{display:block}
@@ -684,6 +685,7 @@
   <input type="text" id="voiceName" maxlength="24" autocomplete="off" placeholder="me">
   <div class="row"><button id="voiceTry">Hear it</button><button id="voiceUse" class="primary">Use this voice</button></div>
   <progress id="voiceBar" max="20" value="0" hidden></progress>
+  <progress id="voiceLvl" max="1" value="0" hidden></progress>
   <p class="note" id="voiceStatus"></p>
   <div class="peekable">
   <h3>Background</h3>
@@ -1776,7 +1778,7 @@ face.load(CFG.avatarUrl);
  * ================================================================== */
 const voiceMaker = (() => {
   const RATE = 24000, KEEP = 28, REC_S = 20;
-  const st = $('voiceStatus'), bar = $('voiceBar'), recBtn = $('voiceRec');
+  const st = $('voiceStatus'), bar = $('voiceBar'), lvl = $('voiceLvl'), recBtn = $('voiceRec');
   const say = (text, bad = false) => { st.textContent = text; st.classList.toggle('bad', bad); };
   const slug = s => s.toLowerCase().replace(/\.[^.]*$/, '').replace(/[^a-z0-9]+/g, '_')
                      .replace(/^_+|_+$/g, '').slice(0, 24);
@@ -1850,7 +1852,7 @@ const voiceMaker = (() => {
     if (src === wavFrom) return wav;
     say('Reading the recording…');
     let x;
-    try { x = await decode(src); }
+    try { x = src.pcm || await decode(src); }
     catch { throw new Error('couldn’t read the sound in that file. Try an audio file (m4a, mp3, wav) or record here.'); }
     const p = pick(x);
     wav = toWav(p.y); wavFrom = src;
@@ -1927,37 +1929,73 @@ const voiceMaker = (() => {
     })();
   };
 
-  /* Record here: REC_S seconds, or tap again to stop sooner. */
+  /* Record here: REC_S seconds, or tap again to stop sooner. The samples are
+     taken straight from the mic (no MediaRecorder file to decode afterwards),
+     and iOS is switched to its record mode first: the page keeps it in
+     playback mode for music, where the mic only delivers silence. */
   recBtn.onclick = async () => {
     if (rec){ rec.stop(); return; }
     if (busy) return;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();   // made inside the tap, so it may run
+    ctx.resume().catch(() => {});
+    music.pause();
+    setSession('play-and-record');
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:false, noiseSuppression:true, autoGainControl:false } });
-    } catch { return say('The microphone isn’t available. Allow it in the browser, or choose a recording instead.', true); }
-    music.pause();
-    const chunks = [], mr = new MediaRecorder(stream);
-    rec = mr;
+    } catch {
+      setSession('playback'); ctx.close().catch(() => {});
+      return say('The microphone isn’t available. Allow it in the browser, or choose a recording instead.', true);
+    }
+    try { await ctx.resume(); } catch {}
+    const src = ctx.createMediaStreamSource(stream);
+    const proc = ctx.createScriptProcessor(4096, 1, 1), hush = ctx.createGain();
+    hush.gain.value = 0;                               // it has to reach the speakers to run, silently
+    src.connect(proc); proc.connect(hush); hush.connect(ctx.destination);
+    const parts = []; let level = 0, heard = 0;
+    proc.onaudioprocess = e => {
+      const d = e.inputBuffer.getChannelData(0);
+      parts.push(new Float32Array(d));
+      let q = 0; for (let i = 0; i < d.length; i += 4) q += d[i] * d[i];
+      const r = Math.sqrt(q / (d.length / 4));
+      level = Math.max(r, level * 0.85);
+      if (r > 0.01) heard++;
+    };
     const t0 = Date.now();
-    bar.hidden = false; bar.max = REC_S; bar.value = 0;
+    bar.hidden = false; bar.max = REC_S; bar.value = 0; lvl.hidden = false;
     recBtn.textContent = 'Stop';
     say('Recording. Read the lines above in your normal voice.');
+    let warned = false;
     const tick = setInterval(() => {
       const s = (Date.now() - t0) / 1000;
-      bar.value = s;
-      if (s >= REC_S && mr.state === 'recording') mr.stop();
-    }, 200);
-    mr.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-    mr.onstop = () => {
-      clearInterval(tick); rec = null;
+      bar.value = s; lvl.value = Math.min(1, level * 6);
+      if (s > 4 && !heard && !warned){ warned = true; say('The microphone is sending silence. Check that nothing else is using it, then try again.', true); }
+      if (s >= REC_S) rec.stop();
+    }, 100);
+    rec = { stop: async () => {
+      if (!rec) return; rec = null;
+      clearInterval(tick);
+      proc.onaudioprocess = null; src.disconnect(); proc.disconnect();
       stream.getTracks().forEach(t => t.stop());
-      bar.hidden = true; recBtn.textContent = 'Record again (20 s)';
-      recorded = new Blob(chunks, { type: mr.mimeType || chunks[0]?.type || 'audio/webm' });
+      setSession('playback');
+      bar.hidden = lvl.hidden = true; recBtn.textContent = 'Record again (20 s)';
+      const sr = ctx.sampleRate, n = parts.reduce((a, p) => a + p.length, 0);
+      ctx.close().catch(() => {});
+      const all = new Float32Array(n); let o = 0;
+      for (const p of parts){ all.set(p, o); o += p.length; }
+      recorded = { pcm: await resample(all, sr) };
       $('voiceFile').value = '';
-      say('Recorded ' + ((Date.now() - t0) / 1000).toFixed(0) + ' s. Tap Hear it to try the voice.');
-    };
-    mr.start(250);
+      say(heard ? 'Recorded ' + (n / sr).toFixed(0) + ' s. Tap Hear it to try the voice.'
+                : 'That recording was silent: the microphone didn’t pick anything up. Try again, or choose a recording instead.', !heard);
+    } };
   };
+  async function resample(x, sr){
+    if (sr === RATE) return x;
+    const off = new OfflineAudioContext(1, Math.ceil(x.length * RATE / sr), RATE);
+    const b = off.createBuffer(1, x.length, sr); b.getChannelData(0).set(x);
+    const s = off.createBufferSource(); s.buffer = b; s.connect(off.destination); s.start();
+    return (await off.startRendering()).getChannelData(0);
+  }
   $('voiceFile').onchange = e => {
     const f = e.target.files[0];
     if (f && !$('voiceName').value.trim()) $('voiceName').value = slug(f.name);
