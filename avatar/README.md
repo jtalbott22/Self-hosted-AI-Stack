@@ -303,7 +303,7 @@ When the page is served over http or https, its defaults are paths **relative to
 | `stt/v1/audio/transcriptions` | Speaches on the host, `:8090` | Voice input |
 | `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
 | `make/jobs` | Avatar maker on the host, `:8703` | New avatar from a photo (step 5) |
-| `music/search`, `music/stream/...`, `music/levels/...` | Music service, `music:8000` | Songs, radio and podcasts, and the visualizer (step 6) |
+| `music/search`, `music/more/...`, `music/stream/...`, `music/prefetch/...`, `music/levels/...` | Music service, `music:8000` | Songs, radio and podcasts, the songs that follow, and the visualizer (step 6) |
 | `lib/lam-renderer.js` | Served file | LAM renderer (falls back to jsDelivr if missing) |
 | `avatars/<name>.zip` | Served file | Avatar bundles |
 | `avatar-config.json` | Served file, optional | Site-wide settings (below) |
@@ -395,7 +395,7 @@ curl http://localhost:8702/music/health     # through the avatar container
 
 | Ask for | Source | What plays |
 |---|---|---|
-| A song, artist, album, genre or mood | YouTube, through [yt-dlp](https://github.com/yt-dlp/yt-dlp) | The best match, then up to 25 related songs from its YouTube mix |
+| A song, artist, album, genre or mood | YouTube, through [yt-dlp](https://github.com/yt-dlp/yt-dlp) | The best match of song length (1 to 10 minutes), then up to 25 related songs from its YouTube mix. "lofi" finds a lofi song, not a 12-hour stream; ask for "a 1 hour mix", "the full album" or "a live set" to get the long version |
 | A radio station by name, call letters, genre or city | [radio-browser.info](https://www.radio-browser.info/) | The live stream |
 | A podcast | Apple's podcast search, then the show's RSS feed | The newest episode, or the one whose title matches what you asked for |
 
@@ -403,14 +403,23 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
 
 **How it plays.**
 - **Pausing and resuming.** Music pauses while the mic is open and while the avatar thinks or speaks, then picks up again when the exchange is over.
-- **Controls.** A card under the status pill shows what's playing, with play/pause, next and stop buttons. The same controls work from the lock screen, the car's Now Playing screen and steering-wheel buttons.
-- **Visualizer.** A spectrum under the card, folded away with the strip below it (remembered per browser). For songs and podcasts the service works out the spectrum from the file (`music/levels/...`, about 0.5 KB per second of audio) and the page draws it in step with the music, so the audio element is never rerouted through Web Audio, which iOS would stop when the screen locks. Live radio has no file to read: Chrome and Android analyse it as it plays, and on iPhone the bars stay flat.
-- **Full screen.** Tap the title for large artwork, a seek bar, previous/next and the source: a link to the YouTube video, the station's website or the episode page, plus who published it.
+- **Controls.** A card under the status pill shows what's playing, with play/pause, next and stop buttons. The same controls work from the lock screen, the car's Now Playing screen and steering-wheel buttons. The artwork pulses while a song is on its way.
+- **In the Lens.** Asking for music opens the Lens on a **♪ Now playing** tab with the artwork, visualizer, seek bar, controls, source and queue, alongside any tool results. While that tab is showing, the card steps aside. Close the Lens and the card is back.
+- **Visualizer.** A spectrum under the card, folded away with the strip below it (remembered per browser). Tap it for another look: bars, waveform, mirror, peak meter, spectrum line or level meter. The choice is remembered. For songs and podcasts the service works out the spectrum from the file (`music/levels/...`, about 0.5 KB per second of audio) and the page draws it in step with the music, so the audio element is never rerouted through Web Audio, which iOS would stop when the screen locks. Live radio has no file to read: Chrome and Android analyse it as it plays, and on iPhone the bars stay flat.
+- **Full screen.** Tap the title (or the artwork in the Lens) for large artwork, a seek bar, previous/next and the source: a link to the YouTube video, the station's website or the episode page, plus who published it.
+  - The room moves with the music. Behind everything, the artwork and three glows in its colours swirl slowly and swell with the lows, mids and highs.
+  - Motes drift up faster as the music gets louder, and sparks fly out from behind the artwork on the beat. The artwork floats, tilts slightly and pulses with the bass.
+  - All of it runs off the same spectrum as the visualizer, so it never touches the audio itself. With **Reduce motion** turned on in the phone's settings, it stays still apart from the glow.
 - **Queue.** The **Queue** button in full screen lists what's playing, what's up next (tap one to jump to it), and the last 50 things played in this browser (tap one to play it again; a song replays by its YouTube id, one request).
 - **Moving it.** Drag the card to any corner. The chat bubble moves the same way, by the grip at its top, to a corner or the top or bottom middle. Both remember where you put them.
+- **Back from the chat.** Whatever a reply opened stays with it in the chat as a chip: a Lens page or the music it started. Scroll back and tap the chip, or the exchange itself, to bring it back. A Lens page reopens as its tab, and music plays again or, if it's already playing, its tab comes to the front.
 - **Same-origin audio.** All audio goes through the service at `music/stream/...`, so the page can play plain-http radio and YouTube audio, which only plays for the address that asked for it. `/stream` only serves results from a recent search; it won't fetch an arbitrary URL.
 - **Song cache.** Songs are downloaded whole, repaired with ffmpeg so iPhones can seek in them, and cached in the `music-cache` volume. The cache is capped at `CACHE_GB`, 2 GB by default.
-- **What it downloads.** A search fetches the song list only, no media. The first song downloads while the avatar is still talking, and the next one only in the last minute of the current one, so skipping around never pulls down songs you don't hear. At most two songs download at once.
+- **How fast it starts.**
+  - Most of YouTube's players make a client wait out the length of an ad (5 to 15 seconds) before the audio may be fetched. The service asks YouTube's visionOS player first, which doesn't make it wait, so a song is ready about two seconds after it's chosen. If that player is refused, yt-dlp's usual players are the fallback, with the wait.
+  - A search returns as soon as the first song is found, and that song starts downloading at once. The related songs come from a second request (`music/more/...`), so the avatar's answer doesn't wait for them.
+  - In practice the music starts within about a second of the avatar finishing its reply.
+- **What it downloads.** A search fetches the song list only, no media, plus the first song. Once a song is playing, the next one is looked up (a couple of small requests, no media), so a skip has only the download left, about a second. The next song itself downloads only in the last minute of the current one, so skipping around never pulls down songs you don't hear. At most two songs download at once.
 
 **iPhone and CarPlay.** iOS lets a page start sound only after a tap. Tapping the mic once covers that, and after it the model can start music by voice. Music keeps playing with the screen locked. To stop the end of each reply getting cut off in the car, set **Setup → Listening → Speakers** to **Car** (see Troubleshooting).
 
