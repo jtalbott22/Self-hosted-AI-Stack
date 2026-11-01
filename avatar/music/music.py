@@ -645,8 +645,8 @@ async def listen(vid: str, out: Path):
     lines, length = res["lines"], res.get("duration") or 0
     path = await yt_file(vid)
     if not length:
-        p = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-                           capture_output=True, text=True)
+        p = await asyncio.to_thread(subprocess.run, ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                                     "-of", "csv=p=0", str(path)], capture_output=True, text=True)
         length = float(p.stdout.strip() or 0)
     heard = []
     for start in range(0, int(length) + 1, PIECE):

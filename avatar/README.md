@@ -336,6 +336,14 @@ cp -r avatar/html/* /mnt/c/nginx/html/avatar/
 
 Because the page calls its services relatively, Windows nginx has to proxy them under the page's folder: `/avatar/llama/` → `127.0.0.1:8000/`, `/avatar/tts/` → `:8880/`, `/avatar/a2e/` → `:8701/`, `/avatar/stt/` → `:8090/`, `/avatar/lens/` → `:8095/`, and for the avatar maker `/avatar/make/` → `:8703/` with `client_max_body_size 16m`. Use the location blocks in `avatar/nginx-avatar.conf` as a template. Otherwise, set absolute addresses such as `http://localhost:8880/v1` in Setup; the services must then accept cross-origin requests.
 
+### Camera behind the face
+
+**Setup → Background** puts a camera behind the face: the rear camera on a phone makes the screen a window with the avatar standing in front of the room, or the front camera puts you behind it.
+- **Background blur** fakes a shallow depth of field, so the face reads as in front of the room. **Background darkness** helps it stand out against a bright scene. While you move either slider, Setup clears so you can see the change.
+- The video stays in the browser: it isn't recorded or sent anywhere. A camera needs HTTPS (or `localhost`).
+- Phones run one camera at a time. A **Camera** call takes over: with the front camera behind the face, the call's picture is shared; with the rear one, the background comes back when the call ends.
+- The face is drawn with a transparent background, so the page's backdrop (or the camera) shows around it. Opening the Lens no longer re-renders the face at a new size: the face is always drawn for the whole window and is scaled and slid into the space above the sheet, in step with it.
+
 ## 5. Make avatars from the page (optional)
 
 With the avatar maker running, **Setup → New avatar from a photo** turns a photo into an avatar without a terminal. Pick a photo, give it a name, and click **Make avatar**. The page shows each step, then the face crop LAM used, and loads the new head as your avatar when it's done. It takes about a minute on an RTX 4070.
@@ -460,6 +468,7 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
 | Radio and podcasts play but songs don't ("YouTube wouldn't play that") | Update yt-dlp: `docker compose build --no-cache music && docker compose up -d music` |
 | Songs show up but don't play, or skip on their own | `docker logs music \| grep page:` shows what the phone's audio element did: plays it refused (`play-refused`), stalls, errors with their codes, and skips after errors. If it only happens with the effects on, set **Now playing effects** to **Light** or **Off** |
 | Music won't start on an iPhone until you tap ▶ | iOS needs one tap on the page first. Tap the mic or ▶ once and voice requests work from then on |
+| Speech starts a second or two after the reply text appears | The page sends the first few words to Kokoro as soon as there's a comma (or a joining word in a long opening), and doesn't wait on the phoneme lookup. The rest is the hardware: with llama's experts on the CPU (`--n-cpu-moe`), the model writes about 15 tokens a second, and Kokoro, also on the CPU, runs about half as fast while the model is writing. Kokoro on the GPU (`kokoro-fastapi-gpu`, under 1 GB of VRAM) or more of llama's expert layers on the GPU both help. A request that uses a tool ("play...") waits for two model replies before it speaks |
 | Renderer fails to load | Check that `avatar/html/lib/lam-renderer.js` exists and has no `import` lines (`grep -c '^import'` prints 0) |
 
 ## Credits

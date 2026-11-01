@@ -32,7 +32,23 @@
   :root{ --stageR:0px; --stageB:0px; --lensW:min(46vw,760px); --ease:cubic-bezier(.2,.8,.2,1) }
   #stage{position:fixed;top:0;left:0;right:var(--stageR);bottom:var(--stageB);overflow:hidden;
     transition:right .34s var(--ease),bottom .3s var(--ease)}
+  /* The face renders at the size of the whole window and never resizes when
+     the Lens opens: it's scaled and slid into the space that's left, in step
+     with the sheet, so it shrinks smoothly instead of re-rendering. */
+  #faceLayer{position:absolute;top:0;left:0;width:100vw;height:100vh;transform-origin:0 0;
+    transition:transform .34s var(--ease);will-change:transform}
+  body.lens-drag #faceLayer{transition:none}
+  #stageEnd, #stageFull{position:fixed;top:0;left:0;right:var(--stageR);bottom:var(--stageB);visibility:hidden;pointer-events:none}
+  #stageFull{right:0;bottom:0}
   #lamStage{position:absolute;inset:0;display:none}
+  /* A camera behind the face (Setup → Background). Blurred like a shallow
+     depth of field, so the face reads as standing in front of the room;
+     scaled up a little so the blur's soft edges stay off screen. */
+  #camBack{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;display:none;pointer-events:none;
+    filter:blur(var(--camBlur,0px)) brightness(var(--camLight,1));transform:scale(var(--camGrow,1))}
+  #camBack.mirror{transform:scale(var(--camGrow,1)) scaleX(-1)}
+  body.cam-bg #camBack{display:block}
+  body.cam-bg #backdrop{display:none}
   #lamStage canvas{width:100%!important;height:100%!important;display:block}
   #stage canvas{display:block}
 
@@ -226,6 +242,12 @@
     padding:22px 22px calc(22px + env(safe-area-inset-bottom,0px));
     overflow-y:auto;transform:translateX(100%);transition:transform .22s ease}
   #settings.open{transform:none}
+  #settings input[type=range]{width:100%;accent-color:var(--live)}
+  /* Moving a background slider: the panel clears so the change shows behind it. */
+  #settings.peek{background:transparent;border-color:transparent}
+  #settings.peek > :not(.peekable), #settings.peek .peekable > :not(.slider){opacity:0}
+  #settings.peek .slider{opacity:1}
+  #settings.peek .slider label{color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.9)}
   #settings h2{margin:0 0 4px;font-size:17px;font-weight:600}
   #settings h3{margin:24px 0 2px;font-size:14px;font-weight:600}
   #settings p.note{margin:0 0 6px;color:var(--dim);font-size:13px;line-height:1.5}
@@ -453,7 +475,9 @@
 <body>
 
 <div id="backdrop"></div>
-<div id="stage"></div>
+<video id="camBack" playsinline muted autoplay aria-hidden="true"></video>
+<div id="stage"><div id="faceLayer"></div></div>
+<div id="stageEnd"></div><div id="stageFull"></div>
 <div id="err" role="alert"></div>
 <canvas id="meters" width="300" height="150" aria-hidden="true"></canvas>
 <div id="callBar" aria-hidden="true"><span id="callName"></span><span class="t" id="callTime">0:00</span></div>
@@ -646,6 +670,16 @@
   <img id="makerPreview" alt="The face crop the new avatar was made from" hidden>
   <label for="makerUrl">Avatar maker address</label>
   <input type="text" id="makerUrl">
+  <div class="peekable">
+  <h3>Background</h3>
+  <p class="note">Put a camera behind the face. On a phone, the rear camera turns the screen into a window with the avatar standing in front of the room. The picture stays on this device: it isn’t recorded or sent anywhere.</p>
+  <label for="camBg">Camera behind the face</label>
+  <select id="camBg"><option value="off">Off</option><option value="rear">Rear camera</option><option value="front">Front camera</option></select>
+  <div class="slider"><label for="camBlur">Background blur (more blur, more depth)</label>
+  <input type="range" id="camBlur" min="0" max="30" step="1"></div>
+  <div class="slider"><label for="camDim">Background darkness (helps the face stand out)</label>
+  <input type="range" id="camDim" min="0" max="80" step="5"></div>
+  </div>
   <label for="faceSize">Face size for a LAM face (1 fills the space above the captions)</label>
   <input type="text" id="faceSize" inputmode="decimal">
   <label for="faceRaise">Face height for a LAM face (0 = centred; positive raises it, negative lowers it — try ±0.1)</label>
@@ -725,6 +759,9 @@ const DEFAULTS = {
   lensKey: '',
   musicOn: 'on',
   musicFx: 'auto',
+  camBg: 'off',
+  camBlur: '10',
+  camDim: '25',
   musicUrl: proxied ? new URL('music', location.href).href : 'http://localhost:8704',
   callNameInput: 'Avatar',
   sysPrompt: 'You are a local voice assistant. Your replies are spoken aloud, so keep them short and conversational — usually one to three sentences. No markdown, no lists, no code blocks, no emoji. If something needs length, offer the short version first.'
@@ -762,8 +799,9 @@ function saveLocal(){
 }
 function applyCfg(){
   $('meters').classList.toggle('on', CFG.meterMode === 'on');
-  face.load(CFG.avatarUrl);
-  face.frameLam();
+  if (CFG.avatarUrl !== face.url) face.load(CFG.avatarUrl);      // a new face only when it changed
+  face.frameLam(); fitFace();
+  backCam.apply(CFG);
   tools.load(true);
 }
 $('saveCfg').onclick = () => {
@@ -804,7 +842,7 @@ if (siteHide && !new URLSearchParams(location.search).has('setup')){
   const b = $('cfgBtn'); b.style.visibility = 'hidden'; b.tabIndex = -1; b.setAttribute('aria-hidden', 'true');
 }
 $('cfgBtn').onclick   = () => $('settings').classList.toggle('open');
-$('closeCfg').onclick = () => $('settings').classList.remove('open');
+$('closeCfg').onclick = () => { $('settings').classList.remove('open'); backCam.apply(CFG); };   // drop an unsaved preview
 $('meters').classList.toggle('on', CFG.meterMode === 'on');
 
 function showError(msg){
@@ -1146,7 +1184,7 @@ class Face {
     this.clock = new THREE.Clock();
     this.meterCtx = $('meters').getContext('2d');
 
-    // Size to the stage, not the window: the stage shrinks when the Lens opens.
+    // Sized to the face layer, which is the whole window (see fitFace).
     this.el = el;
     new ResizeObserver(() => this.resize()).observe(el);
     addEventListener('resize', () => this.resize());
@@ -1183,6 +1221,7 @@ class Face {
   }
 
   async load(url){
+    this.url = url;
     this.clear();
     this.disposeLam();
     if (/\.zip(\?|#|$)/i.test(url || '')) return this.loadLam(url);
@@ -1407,13 +1446,20 @@ class Face {
   async loadLam(url){
     this.renderer.domElement.style.display = 'none';
     let host = $('lamStage');
-    if (!host){ host = document.createElement('div'); host.id = 'lamStage'; $('stage').appendChild(host); }
+    if (!host){ host = document.createElement('div'); host.id = 'lamStage'; $('faceLayer').appendChild(host); }
     host.innerHTML = ''; host.style.display = 'block';
     $('stateLabel').textContent = 'Loading face…';
     try {
       const mod = await (Face._lamLib = Face._lamLib || import(LAM_LIB_LOCAL).catch(() => import(LAM_LIB)));
       const GSR = mod.GaussianSplatRenderer;
       GSR.instance = undefined;
+      // LAM's renderer asks for an opaque canvas. Ask for one with alpha
+      // instead, so what's behind the face (the backdrop, or the camera) shows
+      // through, and the layer can be scaled without showing its edges.
+      const getContext = Face._getContext = Face._getContext || HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(type, attrs){
+        return getContext.call(this, type, /webgl/.test(type) ? { ...(attrs || {}), alpha:true, premultipliedAlpha:true } : attrs);
+      };
       const r = await GSR.getInstance(host, new URL(url, location.href).href, {
         backgroundColor: '0x0e1218',
         getChatState: () => ({ listening:'Listening', transcribing:'Thinking', thinking:'Thinking',
@@ -1421,18 +1467,21 @@ class Face {
         // a fresh object each frame: the renderer scales values in place
         getExpressionData: () => { const o = {}; for (const k of ARKIT_52) o[k] = this.lamExpr[k] || 0; return o; }
       });
+      HTMLCanvasElement.prototype.getContext = getContext;
       if (!r) throw new Error(await Face.lamDiagnose(url));
       this.lam = r;
+      try { r.viewer.renderer.setClearColor(0x000000, 0); } catch {}
       const cam = r.getCamera();
       if (cam){ this.lamCam = cam; this.lamOff = { x:0, y:0 }; this.frameLam(); setTimeout(() => this.frameLam(), 400); }
     } catch (e){
+      if (Face._getContext) HTMLCanvasElement.prototype.getContext = Face._getContext;
       showError('Couldn’t load the LAM avatar: ' + e.message);
       this.disposeLam(); this.buildPlaceholder();
     } finally { setState(state); }
   }
 
   disposeLam(){
-    if (this.lam){ try { this.lam.dispose(); } catch {} }
+    if (this.lam){ try { Promise.resolve(this.lam.dispose()).catch(() => {}); } catch {} }
     this.lam = null; this.lamCam = null; this.lamExpr = {};
     const host = $('lamStage'); if (host){ host.innerHTML = ''; host.style.display = 'none'; }
     this.renderer.domElement.style.display = '';
@@ -1471,9 +1520,10 @@ class Face {
       const head = home.pos.clone().add(dir.clone().multiplyScalar(depth));
       const headH = 0.21 * 2 * t * depth;
 
-      const stage = $('stage').getBoundingClientRect(), H = stage.height || innerHeight, W = stage.width || innerWidth;
+      // Framed for the whole window; fitFace() scales it into a smaller stage.
+      const H = this.el.clientHeight || innerHeight, W = this.el.clientWidth || innerWidth;
       const bar = $('bar').getBoundingClientRect();   // keep clear of the controls plus ~two caption lines
-      const covered = clamp((stage.bottom - bar.top + 96) / H, 0.12, 0.45);
+      const covered = clamp((H - bar.top + 96) / H, 0.12, 0.45);
       const zoom = clamp(parseFloat(CFG.faceSize) || 1, 0.3, 3);
       const distH = headH / (0.5 * (1 - covered) * zoom) / (2 * t);
       const distW = (headH * 0.8) / (0.6 * zoom) / (2 * t * (W / H));
@@ -1604,7 +1654,45 @@ const tilt = (() => {
 })();
 
 const lipsync = new LipSync();
-const face = new Face($('stage'));
+const face = new Face($('faceLayer'));
+
+/* Fit the face into the stage. The face is framed for the whole window, so
+   where it sits there (and how big) follows from the same sums frameLam()
+   does; work them out for the stage too, and scale and slide the layer from
+   one to the other. The stage's final size comes from #stageEnd, which moves
+   at once, so the layer's transition runs alongside the stage's own. */
+/* The most room the caption card takes over a phone's sheet: its own
+   height, or the height it may grow to as a reply comes in. */
+function capRoom(){
+  const c = $('caption');
+  return Math.max(c.offsetHeight, parseFloat(getComputedStyle(c).maxHeight) || 0);
+}
+function fitFace(){
+  const layer = $('faceLayer'), F = $('stageFull').getBoundingClientRect(), S = $('stageEnd').getBoundingClientRect();
+  if (!F.width || !F.height) return;
+  const w = Math.round(F.width) + 'px', h = Math.round(F.height) + 'px';
+  if (layer.style.width !== w || layer.style.height !== h){ layer.style.width = w; layer.style.height = h; }
+  if (!S.width || !S.height) return;
+  const barTop = $('bar').getBoundingClientRect().top;
+  const zoom = clamp(parseFloat(CFG.faceSize) || 1, 0.3, 3), raise = clamp(parseFloat(CFG.faceRaise) || 0, -0.5, 0.5);
+  const place = (W, H, cov, fill) => {
+    const tall = fill * (1 - cov) * zoom * H, f = Math.min(tall, 0.75 * zoom * W);   // face height in px
+    return { f, y: (1 - cov) * H / 2 + 0.65 * tall - raise * H - 0.65 * f };      // the face's middle
+  };
+  const a = place(F.width, F.height, clamp((F.height - barTop + 96) / F.height, 0.12, 0.45), 0.5);
+  // A phone's sheet leaves a short strip with the caption card at its foot:
+  // fit the face to what's above the card, and let it fill more of it.
+  const short = S.height < F.height - 40;
+  const b = short ? place(S.width, S.height, clamp((capRoom() + 14) / S.height, 0.12, 0.6), 0.62)
+                  : place(S.width, S.height, clamp((S.height - barTop + 96) / S.height, 0.12, 0.45), 0.5);
+  const k = Math.min(1, b.f / a.f), tx = S.width / 2 - k * F.width / 2, ty = b.y - k * a.y;
+  layer.style.transform = k > 0.999 && Math.abs(tx) + Math.abs(ty) < 1 ? '' :
+    `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${k.toFixed(4)})`;
+}
+{
+  const ro = new ResizeObserver(() => fitFace());
+  ro.observe($('stageEnd')); ro.observe($('stageFull'));
+}
 face.load(CFG.avatarUrl);
 
 /* ================================================================== *
@@ -2103,9 +2191,10 @@ async function streamTurn(gen, onText){
         content += delta.content; pending += delta.content; onText(delta.content);
         let m;
         // The first words of a reply go to speech at the first comma, colon or
-        // dash once there are a few words, so Kokoro starts while the model is
-        // still on the rest of the sentence. After that, whole sentences.
-        if (!spokeFirst && (m = pending.match(/^([\s\S]{24,}?[,;:—–]\s)/))){
+        // dash once there are three words or so, so Kokoro starts while the model
+        // is still on the rest of the sentence. A long opening with no comma is
+        // cut before an "and", "but", "with"... After that, whole sentences.
+        if (!spokeFirst && (m = pending.match(/^([\s\S]{12,}?[,;:—–]\s)/) || firstCut(pending))){
           enqueue(m[1]); pending = pending.slice(m[1].length); spokeFirst = true;
         }
         while ((m = pending.match(/^([\s\S]*?[.!?…]["')\]]*\s)/)) && m[1].trim().length > 12){
@@ -2125,6 +2214,17 @@ async function streamTurn(gen, onText){
   const toolCalls = calls.filter(c => c && c.function.name)
     .map((c, k) => ({ ...c, id: c.id || ('call_' + Date.now() + '_' + k) }));
   return { content, toolCalls };
+}
+
+/* Where to break a long first sentence that has no comma yet: before a
+   joining word past the 30th character, once 60 have come in. */
+function firstCut(p){
+  if (p.length < 60 || /[.!?…]/.test(p)) return null;
+  const re = /\s(?=(and|but|or|so|because|with|which|that|then|when|while|if|for)\s)/gi;
+  let at = -1, m;
+  while ((m = re.exec(p))) if (m.index >= 30) at = m.index;
+  if (at < 0) at = p.lastIndexOf(' ', p.length - 2);
+  return at >= 30 ? [null, p.slice(0, at + 1)] : null;
 }
 
 async function ask(text, via){
@@ -2257,20 +2357,24 @@ async function fetchPlain(text){
   return { data: await res.arrayBuffer(), timeline: null };
 }
 
-/* One request returns the audio and per-word timings; a second gets phonemes for the same text. */
+/* One request returns the audio and per-word timings; a second gets phonemes
+   for the same text. The phonemes only refine the mouth shapes, so speech
+   never waits on them: they're used if they're in by the time the audio is
+   (or very soon after), and with a LAM face's lip-sync model they're skipped. */
 async function fetchTimed(text){
   const root = kokoroRoot();
-  const [cap, phon] = await Promise.all([
-    fetch(root + '/dev/captioned_speech', {
-      method:'POST', headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ model:'kokoro', voice:CFG.ttsVoice, input:text, response_format:'mp3',
-        speed:parseFloat(CFG.ttsSpeed) || 1, stream:false, return_timestamps:true })
-    }).then(r => { if (!r.ok) throw new Error('captioned ' + r.status); return r.json(); }),
+  const wantPhon = !(CFG.lipMode === 'a2e' && face.lam);
+  const phonP = !wantPhon ? Promise.resolve(null) :
     fetch(root + '/dev/phonemize', {
       method:'POST', headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify({ text, language:'a' })
-    }).then(r => r.ok ? r.json() : null).catch(() => null)
-  ]);
+    }).then(r => r.ok ? r.json() : null).catch(() => null);
+  const cap = await fetch(root + '/dev/captioned_speech', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ model:'kokoro', voice:CFG.ttsVoice, input:text, response_format:'mp3',
+        speed:parseFloat(CFG.ttsSpeed) || 1, stream:false, return_timestamps:true })
+    }).then(r => { if (!r.ok) throw new Error('captioned ' + r.status); return r.json(); });
+  const phon = await Promise.race([phonP, new Promise(r => setTimeout(() => r(null), 120))]);
 
   const bin = atob(cap.audio), bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -2381,6 +2485,7 @@ const cam = (() => {
       stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ ideal:720 }, height:{ ideal:960 } }, audio:false });
     } catch (e){ showError('Camera access was blocked: ' + e.message); return; }
     vid.srcObject = stream; vid.play().catch(() => {});
+    backCam.apply(CFG);
     tile.classList.add('on'); btn.setAttribute('aria-pressed', 'true'); btn.classList.add('active'); btn.querySelector('.lbl').textContent = 'End';
     $('callName').textContent = CFG.callNameInput || 'Avatar';
     $('callBar').classList.add('on');
@@ -2393,6 +2498,7 @@ const cam = (() => {
   function off(){
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; vid.srcObject = null; clearInterval(timer);
+    backCam.apply(CFG);
     tile.classList.remove('on'); $('callBar').classList.remove('on');
     btn.setAttribute('aria-pressed', 'false'); btn.classList.remove('active'); btn.querySelector('.lbl').textContent = 'Camera';
   }
@@ -2422,7 +2528,75 @@ const cam = (() => {
     tile.style.left = left + 'px'; tile.style.top = top + 'px';
   };
   tile.addEventListener('pointerup', snap); tile.addEventListener('pointercancel', snap);
-  return { on, off };
+  return { on, off, stream: () => stream };
+})();
+
+/* ================================================================== *
+ * Background camera — Setup → Background puts the rear (or front) camera
+ * behind the face, blurred and darkened to taste. Like the call camera,
+ * the video never leaves the page.
+ * Phones run one camera at a time, so a camera call takes over: the
+ * front camera's picture is shared, the rear one waits for the call to end.
+ * ================================================================== */
+const backCam = (() => {
+  const v = $('camBack'), root = document.documentElement.style;
+  let stream = null, facing = null, want = null, busy = 0;
+  const facingOf = c => ({ rear:'environment', front:'user' })[c.camBg] || null;
+
+  function look(c){
+    const blur = clamp(parseFloat(c.camBlur) || 0, 0, 30), dim = clamp(parseFloat(c.camDim) || 0, 0, 90);
+    root.setProperty('--camBlur', blur + 'px');
+    root.setProperty('--camGrow', (1 + blur * 0.006).toFixed(3));
+    root.setProperty('--camLight', (1 - dim / 100).toFixed(2));
+  }
+  function stop(){
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; facing = null; v.srcObject = null;
+    document.body.classList.remove('cam-bg');
+  }
+  function show(s, f){
+    v.srcObject = s; v.classList.toggle('mirror', f === 'user');
+    v.play().catch(() => {});
+    document.body.classList.add('cam-bg');
+  }
+  async function apply(c){
+    look(c);
+    want = facingOf(c);
+    const call = cam.stream();
+    if (call){                                        // a call has the camera
+      stop();
+      if (want === 'user') show(call, 'user');
+      return;
+    }
+    if (want === facing && stream && stream.getVideoTracks().some(t => t.readyState === 'live')) return;
+    stop();
+    if (!want) return;
+    const my = ++busy;
+    let s;
+    try {
+      s = await navigator.mediaDevices.getUserMedia({ audio:false,
+        video:{ facingMode:{ ideal:want }, width:{ ideal:1280 }, height:{ ideal:1280 } } });
+    } catch (e){ showError('Couldn’t open the camera for the background: ' + e.message); return; }
+    if (my !== busy || want !== facingOf(c)){ s.getTracks().forEach(t => t.stop()); return; }
+    stream = s; facing = want; show(s, want);
+  }
+
+  // Setup: the sliders and the choice preview live, and the panel clears
+  // while a slider moves so the change shows behind it.
+  const form = () => ({ camBg: $('camBg').value, camBlur: $('camBlur').value, camDim: $('camDim').value });
+  $('camBg').addEventListener('change', () => apply(form()));
+  for (const id of ['camBlur', 'camDim']){
+    const r = $(id);
+    r.addEventListener('input', () => look(form()));
+    r.addEventListener('pointerdown', () => $('settings').classList.add('peek'));
+  }
+  const unpeek = () => $('settings').classList.remove('peek');
+  addEventListener('pointerup', unpeek); addEventListener('pointercancel', unpeek);
+
+  // Phones stop the camera when the page is hidden; pick it up again.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) apply(CFG); });
+  apply(CFG);
+  return { apply };
 })();
 
 /* ================================================================== *
