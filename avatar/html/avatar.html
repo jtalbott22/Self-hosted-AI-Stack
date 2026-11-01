@@ -1086,7 +1086,8 @@ class LipSync {
     clearTimeout(this.restT);
     this.restT = setTimeout(() => {
       if (state !== 'idle' || speaking) return;
-      if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
+      if (music.active()) closeAudioContexts();          // with music playing, none may stay alive (see closeAudioContexts)
+      else if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
     }, ms);
   }
   wake(){
@@ -2457,8 +2458,9 @@ $('capLog').addEventListener('click', e => {
  * just goes quiet instead of replacing the question with an error.
  * ================================================================== */
 let rec = null, micCtx = null;
-/* Guided CarPlay test: close both Web Audio contexts (speech, and the mic's
-   level meter) instead of leaving them suspended. The next tap makes new ones. */
+/* Close both Web Audio contexts (speech, and the mic's level meter) rather than
+   leave them suspended: done whenever music starts (see the music module), and
+   by the guided CarPlay test. lipsync.ensure() and listening make new ones. */
 function closeAudioContexts(){
   try { if (lipsync.ctx){ lipsync.ctx.close(); lipsync.ctx = null; lipsync.analyser = null; } } catch {}
   try { if (micCtx){ micCtx.close(); micCtx = null; } } catch {}
@@ -3533,7 +3535,12 @@ const music = (() => {
 
   el.addEventListener('playing', () => {
     failures = 0; liveTap(); kick(); warmNext();
-    if (state === 'idle' && !tap && el.src !== keepAlive.url()) lipsync.rest(0);   // no Web Audio running next to the music
+    // Music plays with no Web Audio context alive, not even a suspended one: in
+    // the guided CarPlay test every setup with one stuttered over wireless
+    // CarPlay and both without were smooth, everything else switched on or off.
+    // The next tap (mic, buttons) makes fresh ones; while music plays a turn
+    // always starts with one, since follow-up listening waits for music to stop.
+    if (state === 'idle' && !tap && el.src !== keepAlive.url()) closeAudioContexts();
     const it = cur();
     if (it && !it._logged){ it._logged = true; remember(it); }
     if (!want && it){ want = true; paint(); }             // started from the lock screen or the car
