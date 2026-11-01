@@ -641,6 +641,12 @@
   <datalist id="voiceList"></datalist>
   <label for="ttsSpeed">Speed</label>
   <input type="text" id="ttsSpeed">
+  <label for="speechOut">Speech playback</label>
+  <select id="speechOut">
+    <option value="auto">Automatic (audio player on phones)</option>
+    <option value="element">Audio player: smooth over wireless CarPlay and AirPlay</option>
+    <option value="webaudio">Web Audio: the mouth follows the sound most closely</option>
+  </select>
   <label for="lipMode">Lip sync</label>
   <select id="lipMode">
     <option value="a2e">Lip-sync model on your server (best for a LAM face)</option>
@@ -809,6 +815,7 @@ const DEFAULTS = {
   llmKey  : '',
   ttsBase : proxied ? new URL('tts/v1', location.href).href : 'http://localhost:8880/v1',
   ttsVoice: 'af_heart',
+  speechOut: 'auto',
   ttsSpeed: '1.0',
   lipMode : 'a2e',
   a2eUrl  : proxied ? new URL('a2e/a2e', location.href).href : 'http://localhost:8701/a2e',
@@ -1056,6 +1063,27 @@ const keepAlive = (() => {
   };
 })();
 
+/* Speech can play through two plain <audio> elements, taking turns so the next
+   phrase loads while this one plays, instead of Web Audio. Over wireless
+   CarPlay any Web Audio context alive next to playback, even a suspended one,
+   makes it stutter (the guided CarPlay test showed it); an element plays as
+   cleanly as the music does. The mouth then follows the element's clock: the
+   lip-sync model's frames and Kokoro's word timings line up exactly, only the
+   loudness detail is lost. Elements must be started once in a tap (unlock). */
+const speechByEl = () => { const v = CFG.speechOut || 'auto'; return v === 'auto' ? matchMedia('(pointer: coarse)').matches : v === 'element'; };
+const speechEls = [new Audio(), new Audio()];
+for (const a of speechEls){ a.setAttribute('playsinline', ''); a.preload = 'auto'; }
+let speechNext = 0, speechPrimed = false;
+function primeSpeech(){
+  if (speechPrimed) return;
+  speechPrimed = true;
+  for (const a of speechEls){
+    if (a.getAttribute('src')) continue;
+    a.src = keepAlive.url();
+    a.play().then(() => a.pause()).catch(() => { speechPrimed = false; });
+  }
+}
+
 class LipSync {
   constructor(){
     this.ctx = null; this.analyser = null;
@@ -1096,8 +1124,9 @@ class LipSync {
   }
 
   /* Called by the player with the AudioContext time the clip starts at. */
-  start(at, timeline){ this.clipStart = at; this.timeline = timeline; this.seg = 0; }
-  detach(){ this.clipStart = null; this.timeline = null; }
+  /* clock: the speech element's time, when speech plays through one (no analyser then) */
+  start(at, timeline, clock = null){ this.clipStart = at; this.timeline = timeline; this.seg = 0; this.clock = clock; }
+  detach(){ this.clipStart = null; this.timeline = null; this.clock = null; }
 
   /* iOS only lets audio start inside a tap. Playing one silent sample during
      the tap unlocks the AudioContext for everything played later. */
@@ -1105,12 +1134,15 @@ class LipSync {
     if (state !== 'listening') setSession('playback');
     keepAlive.start();
     music.prime();
-    const ctx = this.ensure();
-    if (ctx.state !== 'running') ctx.resume();
-    try {
-      const b = ctx.createBuffer(1, 1, 22050), src = ctx.createBufferSource();
-      src.buffer = b; src.connect(ctx.destination); src.start(0);
-    } catch {}
+    if (speechByEl()) primeSpeech();                    // no Web Audio context at all
+    else {
+      const ctx = this.ensure();
+      if (ctx.state !== 'running') ctx.resume();
+      try {
+        const b = ctx.createBuffer(1, 1, 22050), src = ctx.createBufferSource();
+        src.buffer = b; src.connect(ctx.destination); src.start(0);
+      } catch {}
+    }
     if (state === 'idle') this.rest();                  // a tap that doesn't start a turn
   }
 
@@ -1165,11 +1197,13 @@ class LipSync {
   step(dt){
     for (const k in this.target) this.target[k] = 0;
     let rel = 0;
-    if (this.analyser && this.clipStart !== null && speaking){
-      rel = this.envelope(dt);
-      const t = this.ctx.currentTime - this.clipStart + 0.035;          // a hair of anticipation, like real speech
+    if ((this.clock || this.analyser) && this.clipStart !== null && speaking){
+      const t = (this.clock ? this.clock() : this.ctx.currentTime - this.clipStart) + 0.035;   // a hair of anticipation, like real speech
+      // no analyser with an element: a steady level, or a simple open-and-close without word timings
+      rel = this.clock ? (this.timeline ? 0.65 : 0.45 + 0.35 * Math.abs(Math.sin(t * 9))) : this.envelope(dt);
       let hit = false;
       if (this.timeline){ hit = this.fromTimeline(t); this.source = 'timeline'; }
+      else if (this.clock){ this.target.aa = 0.35 + 0.45 * Math.abs(Math.sin(t * 9)); this.target.O = 0.2 * Math.abs(Math.sin(t * 5)); hit = true; this.source = 'flap'; }
       else if (rel > 0.06){ this.fromAudio(rel); hit = true; this.source = 'audio'; }
 
       if (hit){
@@ -2546,7 +2580,7 @@ async function startServerListening(auto){
     clearInterval(vad); src.disconnect(); stream.getTracks().forEach(t => t.stop());
     micCtx.suspend().catch(() => {});
     setSession('playback');
-    const pctx = lipsync.ensure(); if (pctx.state !== 'running') pctx.resume().catch(() => {});
+    if (!speechByEl()){ const pctx = lipsync.ensure(); if (pctx.state !== 'running') pctx.resume().catch(() => {}); }
     $('talk').style.setProperty('--lvl', 0); rec = null;
     if (!spoke || !chunks.length){ quietEnd(auto, 'I didn’t hear anything. Press the microphone to try again.'); return; }
     setState('transcribing'); caption('', '', 'Transcribing…');
@@ -2612,7 +2646,7 @@ function startBrowserListening(auto){
   try { r.start(); } catch { rec = null; quietEnd(auto, 'The microphone couldn’t start.'); return; }
   arm(auto ? 8000 : 7000);
   setState('listening'); listenCaption(auto, 'Listening…');
-  lipsync.ensure().resume();
+  if (!speechByEl()) lipsync.ensure().resume();
 }
 
 function startListening(auto){
@@ -2772,6 +2806,7 @@ async function ask(text, via){
   history.push({ role:'user', content:text });
   const gen = generation;
   let shown = '';
+  const used = [];                                     // tools called, for the turn report
   try {
     for (let round = 0; round < 5; round++){
       const r = await streamTurn(gen, d => { shown += d; caption(text, shown); });
@@ -2780,6 +2815,7 @@ async function ask(text, via){
       history.push({ role:'assistant', content:r.content || '', tool_calls:r.toolCalls });
       for (const tc of r.toolCalls){
         if (gen !== generation) break;
+        used.push((tc.function && tc.function.name) || '?');
         if (!speaking) setState('working');
         const out = await tools.run(tc).catch(e => 'Tool error: ' + e.message);
         history.push({ role:'tool', tool_call_id:tc.id, content:out });
@@ -2794,6 +2830,8 @@ async function ask(text, via){
     showError('Model request failed: ' + e.message);
   } finally {
     streaming = false; settle();
+    // what was heard, what the model called, how it began: why a request didn't do what was asked
+    music.note('turn', { via, heard:String(text).slice(0, 100), tools:used.join(',') || 'none', reply:shown.trim().slice(0, 80) });
   }
 }
 
@@ -2877,7 +2915,7 @@ function shapeMouth(o){
 
 function a2eFrame(){
   const c = a2eNow; if (!c) return null;
-  const i = Math.floor((c.ctx.currentTime - c.t0) * c.fps);
+  const i = Math.floor((c.clock ? c.clock() : c.ctx.currentTime - c.t0) * c.fps);
   if (i < 0 || i >= c.frames.length) return null;
   const f = c.frames[i], o = {};
   for (let j = 0; j < ARKIT_52.length; j++) o[ARKIT_52[j]] = c.map[j] >= 0 ? f[c.map[j]] : 0;
@@ -2948,6 +2986,7 @@ async function drain(){
 /* Decoded and played through the AudioContext, which the tap unlocked.
    An <audio> element started later, outside the tap, is blocked on iOS. */
 async function play(clip, gen, force){
+  if (speechByEl()) return playEl(clip, gen, force);
   const ctx = lipsync.ensure();
   if (ctx.state !== 'running'){ try { await ctx.resume(); } catch {} }
   if (ctx.state !== 'running'){ await new Promise(r => setTimeout(r, 150)); try { await ctx.resume(); } catch {} }
@@ -2974,6 +3013,40 @@ async function play(clip, gen, force){
     a2eNow = clip.a2e ? { ...clip.a2e, ctx, t0: at, src } : null;
     speaking = true; setState('speaking');
     src.start(at);
+  });
+}
+
+function playEl(clip, gen, force){
+  if (gen !== generation || (muted && !force)) return;
+  closeAudioContexts();                                // nothing Web Audio alive while it plays
+  const a = speechEls[speechNext]; speechNext ^= 1;
+  const url = URL.createObjectURL(new Blob([clip.data], { type:'audio/mpeg' }));
+  a.src = url;
+  return new Promise(resolve => {
+    let over = false;
+    const handle = { stop(){ try { a.pause(); } catch {} finish(); } };
+    function finish(){
+      if (over) return; over = true;
+      a.onended = a.onerror = null;
+      speaking = false; lipsync.detach();
+      if (current === handle) current = null;
+      if (a2eNow && a2eNow.el === a) a2eNow = null;
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      resolve();
+    }
+    current = handle;
+    a.onended = finish;
+    a.onerror = () => { showError('Couldn’t play the speech audio.'); finish(); };
+    a.play().then(() => {
+      if (over) return;
+      const clock = () => a.currentTime;
+      lipsync.start(0, clip.timeline, clock);
+      a2eNow = clip.a2e ? { ...clip.a2e, clock, el:a } : null;
+      speaking = true; setState('speaking');
+    }).catch(e => {
+      if (e && e.name === 'NotAllowedError') showError('The browser is holding audio until you tap. Tap the microphone or Test voice once, then try again.');
+      finish();
+    });
   });
 }
 
