@@ -743,11 +743,15 @@
   </div>
   <p class="note" id="siteCfgStatus"></p>
 
-  <div id="debugLinks" hidden>
   <h3>Troubleshooting</h3>
-  <p class="note">Test pages on this server, for tracking down problems.</p>
-  <p class="note"><a id="carplayTest" href="carplay-test.html" target="_blank" rel="noopener">CarPlay audio test</a>: a plain audio player with nothing else on the page. If it stutters over wireless CarPlay too, the problem is Safari and the phone’s link to the car, not this page.</p>
-  </div>
+  <p class="note" id="debugLinks" hidden><a id="carplayTest" href="carplay-test.html" target="_blank" rel="noopener">CarPlay audio test</a>: a plain audio player with nothing else on the page. If it stutters over wireless CarPlay too, the problem is Safari and the phone’s link to the car, not this page.</p>
+  <p class="note"><b>Performance tests.</b> Switch parts of the page off to find what upsets playback. They take effect at once, stay off on this device until you switch them back on, and are noted in the playback reports on the server.</p>
+  <label class="check"><input type="checkbox" class="perf" data-k="face"> Face drawing</label>
+  <label class="check"><input type="checkbox" class="perf" data-k="viz"> Visualizer and effects (bars, particles, moving artwork)</label>
+  <label class="check"><input type="checkbox" class="perf" data-k="lyrics"> Lyrics following the song</label>
+  <label class="check"><input type="checkbox" class="perf" data-k="tilt"> Tilt parallax</label>
+  <label class="check"><input type="checkbox" class="perf" data-k="keep"> Silent keep-alive loop (keeps speech audible with the ring switch on silent)</label>
+  <div class="row"><button id="perfAllOff">Turn all off</button><button id="perfAllOn">Turn all on</button></div>
 </aside>
 
 <script type="module">
@@ -820,6 +824,13 @@ try {
 const $ = id => document.getElementById(id);
 const fillForm = () => { for (const k in DEFAULTS) if ($(k)) $(k).value = CFG[k]; };
 fillForm();
+
+/* Setup → Troubleshooting → Performance tests: switch parts of the page off
+   to find what upsets playback (music stuttering over wireless CarPlay).
+   Per browser, all on unless switched off, and in every playback report. */
+const PERF = { face:true, viz:true, lyrics:true, tilt:true, keep:true };
+try { Object.assign(PERF, JSON.parse(localStorage.getItem('avatarPerf') || '{}')); } catch {}
+const perfOff = () => Object.keys(PERF).filter(k => !PERF[k]).join(',') || 'none';
 
 function saveLocal(){
   const diff = {};
@@ -996,6 +1007,7 @@ const keepAlive = (() => {
   return {
     url(){ return wav || (wav = silentWav()); },
     start(){
+      if (!PERF.keep){ if (el && !el.paused) el.pause(); return; }
       if (!el){ el = new Audio(this.url()); el.loop = true; el.setAttribute('playsinline', ''); }
       if (el.paused) el.play().catch(() => {});
     },
@@ -1528,11 +1540,12 @@ class Face {
       HTMLCanvasElement.prototype.getContext = getContext;
       if (dpr) Object.defineProperty(window, 'devicePixelRatio', dpr); else delete window.devicePixelRatio;
       if (!r) throw new Error(await Face.lamDiagnose(url));
-      this.lam = r;
+      this.lam = r; this.lamStopped = false;
       try { r.viewer.renderer.setClearColor(0x000000, 0); } catch {}
       const cam = r.getCamera();
       if (cam){ this.lamCam = cam; this.lamOff = { x:0, y:0 }; this.frameLam(); setTimeout(() => this.frameLam(), 400); }
       homeIcon.refresh();
+      if (!PERF.face) this.applyPerf();
     } catch (e){
       if (Face._getContext) HTMLCanvasElement.prototype.getContext = Face._getContext;
       if (Object.getOwnPropertyDescriptor(window, 'devicePixelRatio')) delete window.devicePixelRatio;
@@ -1657,6 +1670,21 @@ class Face {
     });
   }
 
+  /* Performance tests → Face drawing: stop both drawing loops (this page's and
+     LAM's own) and hide the face; on again restarts them. */
+  applyPerf(){
+    const on = PERF.face;
+    this.el.style.visibility = on ? '' : 'hidden';
+    this.renderer.setAnimationLoop(on ? () => this.tick() : null);
+    // LAM's own loop is its render(), which keeps its frame id on the viewer:
+    // viewer.stop() cancels it, and render() starts it again.
+    const r = this.lam, v = r && r.viewer;
+    try {
+      if (v && !on && !this.lamStopped){ v.stop(); this.lamStopped = true; }
+      else if (v && on && this.lamStopped){ this.lamStopped = false; r.render(); }
+    } catch {}
+  }
+
   /* Parallax for LAM: swing its camera around its target by the change in tilt,
      so it composes with any drag-orbiting the renderer's own controls allow. */
   lamParallax(tp){
@@ -1720,7 +1748,7 @@ const tilt = (() => {
   let raw = { x:0, y:0 }, cur = { x:0, y:0 }, base = null, lastEvt = 0, asked = false;
   const LIM = 22;            // degrees of tilt for full effect
   function onOrient(e){
-    if (e.beta == null || e.gamma == null) return;
+    if (!PERF.tilt || e.beta == null || e.gamma == null) return;
     const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
     let x = e.gamma, y = e.beta;
     if (ang === 90){ x = e.beta; y = -e.gamma; }
@@ -1752,7 +1780,7 @@ const tilt = (() => {
     addEventListener('deviceorientation', onOrient);  // Android: no prompt needed
   return {
     value(dt){
-      const on = CFG.tiltMode !== 'off';
+      const on = CFG.tiltMode !== 'off' && PERF.tilt;
       const tx = on ? raw.x : 0, ty = on ? raw.y : 0;
       const k = Math.min(1, dt * 6);
       cur.x += (tx - cur.x) * k; cur.y += (ty - cur.y) * k;
@@ -1796,6 +1824,22 @@ for (const ev of ['gesturestart', 'gesturechange', 'gestureend'])
 document.addEventListener('touchmove', e => {
   if (e.touches.length > 1 || (e.scale !== undefined && e.scale !== 1)) e.preventDefault();
 }, { passive:false });
+
+/* Setup → Troubleshooting → Performance tests. */
+for (const box of document.querySelectorAll('input.perf')){
+  box.checked = PERF[box.dataset.k];
+  box.onchange = () => setPerf({ [box.dataset.k]: box.checked });
+}
+function setPerf(ch){
+  Object.assign(PERF, ch);
+  for (const box of document.querySelectorAll('input.perf')) box.checked = PERF[box.dataset.k];
+  try { localStorage.setItem('avatarPerf', JSON.stringify(PERF)); } catch {}
+  face.applyPerf();
+  keepAlive.start();                                   // stops it when switched off
+  music.perfChanged();
+}
+$('perfAllOff').onclick = () => setPerf({ face:false, viz:false, lyrics:false, tilt:false, keep:false });
+$('perfAllOn').onclick  = () => { setPerf({ face:true, viz:true, lyrics:true, tilt:true, keep:true }); lipsync.unlock(); };
 
 /* Troubleshooting links in Setup, shown only for test pages this server has. */
 fetch('carplay-test.html', { method:'HEAD', cache:'no-store' })
@@ -1841,6 +1885,7 @@ function fitFace(){
   ro.observe($('stageEnd')); ro.observe($('stageFull'));
 }
 face.load(CFG.avatarUrl);
+if (!PERF.face) face.applyPerf();
 
 /* ================================================================== *
  * Avatar maker — upload a photo, the server (avatar_maker.py) runs LAM,
@@ -3205,12 +3250,12 @@ const music = (() => {
      that were refused, stalls, errors. A few dozen small reports at most. */
   let reports = 0;
   function report(ev, extra){
-    if (reports++ > 150 || !enabled()) return;
+    if (reports++ > 600 || !enabled()) return;
     const it = cur();
     const body = JSON.stringify({ ev, ...extra, title:it ? it.title.slice(0, 60) : '', kind:it ? it.kind : '',
       t:+el.currentTime.toFixed(1), rs:el.readyState, ns:el.networkState, paused:el.paused, want, held, state,
       fx:fxLevel(), lens:document.body.classList.contains('lens-music'), hidden:document.hidden,
-      ac:(lipsync.ctx && lipsync.ctx.state) || 'none', ka:keepAlive.state(), dpr:devicePixelRatio });
+      ac:(lipsync.ctx && lipsync.ctx.state) || 'none', ka:keepAlive.state(), dpr:devicePixelRatio, off:perfOff() });
     // fetch, not sendBeacon: Safari sends beacons without the page's login
     fetch(base() + '/log', { method:'POST', body, keepalive:true, headers:{ 'Content-Type':'text/plain' } }).catch(() => {});
   }
@@ -3404,6 +3449,22 @@ const music = (() => {
     if (want && !held && !listenSoon && !rec && state === 'idle' && cur() &&
         el.paused && !el.ended && el.readyState >= 2) el.play().catch(() => {});
   }, 2000);
+  /* Every 30 s of playback: a report with the Performance tests switches, how
+     often the page's main thread stalled (a 100 ms timer firing over 150 ms
+     late) and how often the player ran dry ('waiting'). */
+  const jank = { n:0, max:0, waits:0, last:performance.now(), since:0 };
+  setInterval(() => {
+    const now = performance.now(), late = now - jank.last - 100;
+    jank.last = now;
+    if (el.paused || document.hidden) return;
+    if (late > 150){ jank.n++; jank.max = Math.max(jank.max, Math.round(late)); }
+    if (!jank.since) jank.since = now;
+    if (now - jank.since >= 30000){
+      report('perf', { stalls:jank.n, worst:jank.max, dry:jank.waits });
+      jank.n = jank.max = jank.waits = 0; jank.since = now;
+    }
+  }, 100);
+  el.addEventListener('waiting', () => { if (!el.paused) jank.waits++; });
   el.addEventListener('timeupdate', maybePrefetch);
   el.addEventListener('timeupdate', clock);
   el.addEventListener('durationchange', clock);
@@ -3834,13 +3895,15 @@ const music = (() => {
     vu.lo = Math.max(0, vu.lo - dt * 0.35); vu.hi = Math.max(0, vu.hi - dt * 0.35);
     if (vu.lo > 0.004 || vu.hi > 0.004) moving = true;
     summarize(now, dt);
-    if (cardViz()) draw($('musicViz'), DEF_PAL[0], now);
+    if (cardViz() && PERF.viz) draw($('musicViz'), DEF_PAL[0], now);
     const fxv = fxOn();
-    full.classList.toggle('fx', fxv && fxLevel() === 'full');
+    full.classList.toggle('fx', fxv && fxLevel() === 'full' && PERF.viz);
     if (fxv){
-      draw($('mfViz'), pal[0], now); fx(now); syncLyrics();
-      if (sparks.length || lvl.beat > 0.01) moving = true;
+      if (PERF.viz){ draw($('mfViz'), pal[0], now); fx(now); }
+      if (PERF.lyrics) syncLyrics();
+      if (PERF.viz && (sparks.length || lvl.beat > 0.01)) moving = true;
     }
+    if (!PERF.viz && !PERF.lyrics){ lastT = 0; return; }   // nothing to draw: no frame loop at all
     if (moving || !el.paused || now - modeAt < 1400) raf = requestAnimationFrame(frame);
     else lastT = 0;
   }
@@ -4127,7 +4190,7 @@ const music = (() => {
       ' It starts the moment you stop talking, so reply with just a few words. Do not list or read out details.';
   }
 
-  return { prime, onState, pause, replay, enabled, active: () => want && !!cur(),
+  return { prime, onState, pause, replay, enabled, active: () => want && !!cur(), perfChanged: () => kick(),
            tools: () => enabled() ? TOOLS : [], handles: n => n === 'play_music' || n === 'music_control', run };
 })();
 
