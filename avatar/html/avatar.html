@@ -1016,6 +1016,22 @@ class LipSync {
     return this.ctx;
   }
 
+  /* Between replies the context is suspended. A running Web Audio graph keeps
+     the phone's whole audio path in small low-latency buffers, even while it
+     only plays silence, and next to music over wireless CarPlay (or AirPlay)
+     that's heard as stutter. A context a tap once started can be resumed
+     later without one, so it wakes as soon as a turn begins. */
+  rest(){
+    clearTimeout(this.restT);
+    this.restT = setTimeout(() => {
+      if (state === 'idle' && !speaking && this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
+    }, 4000);                                          // the last syllable has reached the speakers by then
+  }
+  wake(){
+    clearTimeout(this.restT);
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
+  }
+
   /* Called by the player with the AudioContext time the clip starts at. */
   start(at, timeline){ this.clipStart = at; this.timeline = timeline; this.seg = 0; }
   detach(){ this.clipStart = null; this.timeline = null; }
@@ -1485,6 +1501,11 @@ class Face {
       HTMLCanvasElement.prototype.getContext = function(type, attrs){
         return getContext.call(this, type, /webgl/.test(type) ? { ...(attrs || {}), alpha:true, premultipliedAlpha:true } : attrs);
       };
+      // LAM reads the pixel density once, here. A phone's 3x means about three
+      // million pixels of splats a frame for the full-window face; 2x looks the
+      // same on soft splats at under half the work (as the GLB face is capped).
+      const dpr = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
+      if (devicePixelRatio > 2) Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
       const r = await GSR.getInstance(host, new URL(url, location.href).href, {
         backgroundColor: '0x0e1218',
         getChatState: () => ({ listening:'Listening', transcribing:'Thinking', thinking:'Thinking',
@@ -1495,6 +1516,7 @@ class Face {
                                     return o; }
       });
       HTMLCanvasElement.prototype.getContext = getContext;
+      if (dpr) Object.defineProperty(window, 'devicePixelRatio', dpr); else delete window.devicePixelRatio;
       if (!r) throw new Error(await Face.lamDiagnose(url));
       this.lam = r;
       try { r.viewer.renderer.setClearColor(0x000000, 0); } catch {}
@@ -1503,6 +1525,7 @@ class Face {
       homeIcon.refresh();
     } catch (e){
       if (Face._getContext) HTMLCanvasElement.prototype.getContext = Face._getContext;
+      if (Object.getOwnPropertyDescriptor(window, 'devicePixelRatio')) delete window.devicePixelRatio;
       showError('Couldn’t load the LAM avatar: ' + e.message);
       this.disposeLam(); this.buildPlaceholder();
     } finally { setState(state); }
@@ -2215,6 +2238,7 @@ function setState(s){
                                   thinking:'Thinking', working:'Working', speaking:'Speaking' }[s];
   $('talk').classList.toggle('hot', s === 'listening');
   music.onState(s);
+  if (s === 'idle') lipsync.rest(); else lipsync.wake();
 }
 const esc = s => (s || '').replace(/[&<>]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c]));
 /* Markdown the model slips in anyway reads badly as a caption; keep the line breaks, drop the symbols. */
@@ -3171,7 +3195,8 @@ const music = (() => {
     const it = cur();
     const body = JSON.stringify({ ev, ...extra, title:it ? it.title.slice(0, 60) : '', kind:it ? it.kind : '',
       t:+el.currentTime.toFixed(1), rs:el.readyState, ns:el.networkState, paused:el.paused, want, held, state,
-      fx:fxLevel(), lens:document.body.classList.contains('lens-music'), hidden:document.hidden });
+      fx:fxLevel(), lens:document.body.classList.contains('lens-music'), hidden:document.hidden,
+      ac:(lipsync.ctx && lipsync.ctx.state) || 'none', dpr:devicePixelRatio });
     // fetch, not sendBeacon: Safari sends beacons without the page's login
     fetch(base() + '/log', { method:'POST', body, keepalive:true, headers:{ 'Content-Type':'text/plain' } }).catch(() => {});
   }
