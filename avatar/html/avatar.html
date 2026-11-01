@@ -991,7 +991,11 @@ const keepAlive = (() => {
     start(){
       if (!el){ el = new Audio(this.url()); el.loop = true; el.setAttribute('playsinline', ''); }
       if (el.paused) el.play().catch(() => {});
-    }
+    },
+    /* Only needed while the avatar talks: it's stopped between turns so music
+       plays alone. (Once a tap has started it, it can start again without one.) */
+    stop(){ if (el && !el.paused) el.pause(); },
+    state(){ return !el ? 'none' : el.paused ? 'paused' : 'playing'; }
   };
 })();
 
@@ -1021,14 +1025,17 @@ class LipSync {
      only plays silence, and next to music over wireless CarPlay (or AirPlay)
      that's heard as stutter. A context a tap once started can be resumed
      later without one, so it wakes as soon as a turn begins. */
-  rest(){
+  rest(ms = 4000){                                     // by 4 s the last syllable has reached the speakers
     clearTimeout(this.restT);
     this.restT = setTimeout(() => {
-      if (state === 'idle' && !speaking && this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
-    }, 4000);                                          // the last syllable has reached the speakers by then
+      if (state !== 'idle' || speaking) return;
+      if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
+      keepAlive.stop();                                // the same goes for the silent loop
+    }, ms);
   }
   wake(){
     clearTimeout(this.restT);
+    keepAlive.start();
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
   }
 
@@ -1048,6 +1055,7 @@ class LipSync {
       const b = ctx.createBuffer(1, 1, 22050), src = ctx.createBufferSource();
       src.buffer = b; src.connect(ctx.destination); src.start(0);
     } catch {}
+    if (state === 'idle') this.rest();                  // a tap that doesn't start a turn
   }
 
   band(lo, hi){
@@ -3196,7 +3204,7 @@ const music = (() => {
     const body = JSON.stringify({ ev, ...extra, title:it ? it.title.slice(0, 60) : '', kind:it ? it.kind : '',
       t:+el.currentTime.toFixed(1), rs:el.readyState, ns:el.networkState, paused:el.paused, want, held, state,
       fx:fxLevel(), lens:document.body.classList.contains('lens-music'), hidden:document.hidden,
-      ac:(lipsync.ctx && lipsync.ctx.state) || 'none', dpr:devicePixelRatio });
+      ac:(lipsync.ctx && lipsync.ctx.state) || 'none', ka:keepAlive.state(), dpr:devicePixelRatio });
     // fetch, not sendBeacon: Safari sends beacons without the page's login
     fetch(base() + '/log', { method:'POST', body, keepalive:true, headers:{ 'Content-Type':'text/plain' } }).catch(() => {});
   }
@@ -3372,6 +3380,7 @@ const music = (() => {
 
   el.addEventListener('playing', () => {
     failures = 0; liveTap(); kick(); warmNext();
+    if (state === 'idle' && !tap && el.src !== keepAlive.url()) lipsync.rest(0);   // music plays alone: no Web Audio, no silent loop
     const it = cur();
     if (it && !it._logged){ it._logged = true; remember(it); }
     if (!want && it){ want = true; paint(); }             // started from the lock screen or the car
