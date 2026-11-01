@@ -6,6 +6,7 @@
     GET /stream/{token}                          -> the audio, same origin
     POST /prefetch/{token}[?warm=1]              -> get the next song ready
     GET /levels/{token}                          -> the visualizer's frames
+    GET /lyrics/{token}                          -> a song's lyrics, timed when possible
 
 Sources, none of which need an account or a key:
     music    YouTube, through yt-dlp. The first hit is followed by its YouTube
@@ -25,6 +26,7 @@ fetch what a search returned, not any address a caller makes up.
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -109,10 +111,14 @@ def yt_thumb(e):
 
 def yt_entry(e):
     who = e.get("channel") or e.get("uploader") or ""
-    return item("music", e["id"], e.get("title"), who, yt_thumb(e), e.get("duration"),
-                link=f"https://www.youtube.com/watch?v={e['id']}", link_label="Watch on YouTube",
-                credit=f"Uploaded to YouTube by {who}" if who else "From YouTube",
-                credit_link=f"https://www.youtube.com/channel/{e['channel_id']}" if e.get("channel_id") else "")
+    it = item("music", e["id"], e.get("title"), who, yt_thumb(e), e.get("duration"),
+              link=f"https://www.youtube.com/watch?v={e['id']}", link_label="Watch on YouTube",
+              credit=f"Uploaded to YouTube by {who}" if who else "From YouTube",
+              credit_link=f"https://www.youtube.com/channel/{e['channel_id']}" if e.get("channel_id") else "")
+    tok = it["url"].split("/")[-1]
+    TOKENS[tok]["meta"] = (e.get("title") or "", who, e.get("duration"))
+    it["lyrics"] = "lyrics/" + tok
+    return it
 
 
 def yt_list(url: str, n: int = 10):
@@ -469,6 +475,80 @@ async def levels(tok: str):
         LEVEL_TASKS[key] = task
         task.add_done_callback(lambda f: (LEVEL_TASKS.pop(key, None), f.exception()))
     return Response(status_code=202, headers=hdr)
+
+
+# --------------------------------------------------------------------------
+# Lyrics, from LRCLIB (lrclib.net): a free, open lyrics database, most of it
+# timed line by line. YouTube titles are "Artist - Song (Official Video)";
+# the artist and song are worked out from that, and of the matches the one
+# closest in length to the video wins, so the timing lines up.
+# --------------------------------------------------------------------------
+LRCLIB = "https://lrclib.net/api"
+LYRICS = CACHE / "lyrics"
+LYRICS.mkdir(parents=True, exist_ok=True)
+_NOISE = re.compile(r"\s*[\(\[][^\)\]]*[\)\]]")         # (Official Video) [4K] (feat. X) ...
+_FEAT = re.compile(r"\s+(ft\.?|feat\.?|featuring|with)\s+.*$", re.I)
+_TAIL = re.compile(r"\s*(\||//).*$|\s+(official\s+)?(music\s+)?(video|audio|lyrics?|visuali[sz]er|hd|4k)\s*$", re.I)
+
+
+def guess_song(title: str, channel: str):
+    t = _TAIL.sub("", _NOISE.sub("", title)).strip(" -–—\"'")
+    parts = re.split(r"\s+[-–—]\s+", t, maxsplit=1)
+    if len(parts) == 2:
+        artist, track = parts
+    else:
+        artist = re.sub(r"\s*-\s*Topic$|VEVO$|\s+Official$", "", channel or "", flags=re.I)
+        track = t
+    return _FEAT.sub("", artist).strip(), _FEAT.sub("", track).strip(" \"'")
+
+
+def parse_lrc(text: str):
+    lines = []
+    for raw in (text or "").splitlines():
+        stamps = re.findall(r"\[(\d+):(\d+(?:\.\d+)?)\]", raw)
+        words = re.sub(r"\[[^\]]*\]", "", raw).strip()
+        for m, sec in stamps:
+            lines.append([round(int(m) * 60 + float(sec), 2), words])
+    return sorted(lines)
+
+
+async def find_lyrics(title: str, channel: str, duration):
+    artist, track = guess_song(title, channel)
+    found = []
+    for params in ({"track_name": track, "artist_name": artist}, {"q": f"{artist} {track}"}):
+        if not track:
+            break
+        r = await http.get(f"{LRCLIB}/search", params=params)
+        r.raise_for_status()                     # busy (503): don't remember it as "no lyrics"
+        found = [x for x in r.json() if not x.get("instrumental") and (x.get("syncedLyrics") or x.get("plainLyrics"))]
+        if found:
+            break
+    if not found:
+        return {"lines": None, "plain": None}
+    d = duration or 0
+    timed = [x for x in found if x.get("syncedLyrics")]
+    best = min(timed or found, key=lambda x: abs((x.get("duration") or 0) - d) if d else 0)
+    return {"lines": parse_lrc(best.get("syncedLyrics") or "") or None,
+            "plain": (best.get("plainLyrics") or "").strip() or None,
+            "track": best.get("trackName"), "artist": best.get("artistName"),
+            "lyricsDuration": best.get("duration"), "duration": duration,
+            "credit": "Lyrics from LRCLIB", "creditLink": "https://lrclib.net/"}
+
+
+@app.get("/lyrics/{tok}")
+async def lyrics(tok: str):
+    t = TOKENS.get(tok)
+    if not t or "meta" not in t:
+        raise HTTPException(404, "No lyrics for that.")
+    out = LYRICS / f"{t['src']}.json"
+    if out.exists() and (time.time() - out.stat().st_mtime < 7 * 86400 or out.stat().st_size > 60):
+        return Response(out.read_bytes(), media_type="application/json")
+    try:
+        res = await find_lyrics(*t["meta"])
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(502, "The lyrics service didn't answer.")
+    out.write_text(json.dumps(res))                 # misses are kept a week, then asked again
+    return res
 
 
 # --------------------------------------------------------------------------

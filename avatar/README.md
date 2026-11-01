@@ -303,7 +303,7 @@ When the page is served over http or https, its defaults are paths **relative to
 | `stt/v1/audio/transcriptions` | Speaches on the host, `:8090` | Voice input |
 | `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
 | `make/jobs` | Avatar maker on the host, `:8703` | New avatar from a photo (step 5) |
-| `music/search`, `music/more/...`, `music/stream/...`, `music/prefetch/...`, `music/levels/...` | Music service, `music:8000` | Songs, radio and podcasts, the songs that follow, and the visualizer (step 6) |
+| `music/search`, `music/more/...`, `music/stream/...`, `music/prefetch/...`, `music/levels/...`, `music/lyrics/...`, `music/log` | Music service, `music:8000` | Songs, radio and podcasts, the songs that follow, the visualizer, lyrics, and playback reports (step 6) |
 | `lib/lam-renderer.js` | Served file | LAM renderer (falls back to jsDelivr if missing) |
 | `avatars/<name>.zip` | Served file | Avatar bundles |
 | `avatar-config.json` | Served file, optional | Site-wide settings (below) |
@@ -410,7 +410,12 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
   - The room moves with the music. Behind everything, the artwork and three glows in its colours swirl slowly and swell with the lows, mids and highs.
   - Motes drift up faster as the music gets louder, and sparks fly out from behind the artwork on the beat. The artwork floats, tilts slightly and pulses with the bass.
   - All of it runs off the same spectrum as the visualizer, so it never touches the audio itself. With **Reduce motion** turned on in the phone's settings, it stays still apart from the glow.
-  - **Setup → Music → Now playing effects** picks how much: **Full** (all of the above), **Light** (the artwork moves and glows; no colour wash or particles) or **Off**. **Automatic**, the default, is Full on computers and Light on phones, which are already drawing the avatar. Nothing moves while the music is paused.
+  - **Setup → Music → Now playing effects** picks how much: **Full** (all of the above), **Light** (particles, sparks and the moving artwork, without the colour wash, which is the costly part) or **Off**. **Automatic**, the default, is Full on computers and Light on phones, which are already drawing the avatar. Nothing moves while the music is paused.
+- **Lyrics.**
+  - For songs, the service looks the lyrics up on [LRCLIB](https://lrclib.net/), a free, open lyrics database with no key, most of it timed line by line (`music/lyrics/...`). The artist and song are worked out from the YouTube title. Of the matches, the one closest in length to the video wins, so the timing lines up.
+  - Under the title, three lines scroll by with the one being sung lit up. The same line also shows on the small card.
+  - Tap them, or **Lyrics**, for the whole song. Tap a line to play from there. If a video's intro throws the timing off, **Sooner** and **Later** nudge it by half a second.
+  - Songs with untimed lyrics only show them under **Lyrics**. Lookups are cached in the `music-cache` volume.
 - **Queue.** The **Queue** button in full screen lists what's playing, what's up next (tap one to jump to it), and the last 50 things played in this browser (tap one to play it again; a song replays by its YouTube id, one request).
 - **Moving it.** Drag the card to any corner. The chat bubble moves the same way, by the grip at its top, to a corner or the top or bottom middle. Both remember where you put them.
 - **Back from the chat.** Whatever a reply opened stays with it in the chat as a chip: a Lens page or the music it started. Scroll back and tap the chip, or the exchange itself, to bring it back. A Lens page reopens as its tab, and music plays again or, if it's already playing, its tab comes to the front.

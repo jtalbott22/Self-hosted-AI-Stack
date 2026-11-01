@@ -357,14 +357,38 @@
     border:1px solid var(--line);background:rgba(25,33,44,.7);color:var(--text)!important;font-size:14px}
   #mfLink svg{width:14px;height:14px}
   /* queue: up next and what's played */
-  #mfListBtn{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;height:42px;padding:0 14px!important;
+  #mfTop{position:absolute;top:calc(env(safe-area-inset-top,0px) + 12px);right:12px;display:flex;gap:8px;z-index:1}
+  #mfListBtn, #mfLyrBtn{height:42px;padding:0 14px!important;
     border-radius:999px;display:flex;align-items:center;gap:8px;background:rgba(25,33,44,.7)!important;font-size:14px!important}
-  #mfListBtn svg{width:18px;height:18px}
-  #musicFull.list #mfListBtn{background:var(--text)!important;color:#10141b!important}
+  #mfListBtn svg, #mfLyrBtn svg{width:18px;height:18px}
+  #mfLyrBtn[hidden]{display:none}
+  #musicFull.list #mfListBtn, #musicFull.lyr #mfLyrBtn{background:var(--text)!important;color:#10141b!important}
+  /* lyrics: three lines under the title, the one being sung lit up;
+     Lyrics (or a tap) gives them the whole window */
+  #mfLyrics{position:relative;width:min(100%, 560px);flex:0 0 auto;height:4.6em;overflow:hidden;cursor:pointer;
+    font-size:17px;line-height:1.35;font-weight:650;scrollbar-width:none;overscroll-behavior:contain;
+    -webkit-mask-image:linear-gradient(transparent, #000 28%, #000 72%, transparent);mask-image:linear-gradient(transparent, #000 28%, #000 72%, transparent)}
+  #mfLyrics::-webkit-scrollbar{display:none}
+  #mfLyrics[hidden]{display:none}
+  #mfLyrLines{padding:1.6em 0}
+  #mfLyrLines div{padding:3px 8px;color:rgba(226,231,238,.4);transition:color .35s, transform .35s var(--ease), text-shadow .35s;
+    text-shadow:0 1px 3px rgba(0,0,0,.4)}
+  #mfLyrLines div.on{color:#fff;transform:scale(1.05);text-shadow:0 0 18px rgba(255,255,255,.28),0 1px 3px rgba(0,0,0,.5)}
+  #mfLyrLines div.gap{color:rgba(226,231,238,.3)}
+  #mfLyrBar{display:none;align-items:center;justify-content:center;gap:14px;font-size:12.5px;color:var(--dim)}
+  #mfLyrBar button{font-size:12.5px!important;padding:5px 10px!important;border-radius:999px;border:1px solid var(--line)!important;color:var(--dim)!important}
+  #mfLyrBar a{color:var(--live);text-decoration:none}
+  #musicFull.lyr #mfArtBox, #musicFull.lyr #mfViz, #musicFull.lyr #mfKind, #musicFull.lyr #mfSource{display:none}
+  #musicFull.lyr{justify-content:flex-start}
+  #musicFull.lyr #mfLyrics{flex:1 1 auto;height:auto;min-height:150px;overflow-y:auto;font-size:21px;line-height:1.4;cursor:default;
+    -webkit-mask-image:linear-gradient(transparent, #000 10%, #000 90%, transparent);mask-image:linear-gradient(transparent, #000 10%, #000 90%, transparent)}
+  #musicFull.lyr #mfLyrLines{padding:35% 0}
+  #musicFull.lyr.timed #mfLyrLines div{cursor:pointer}
+  #musicFull.lyr.timed #mfLyrBar{display:flex}
   #mfList{display:none;width:min(100%, 560px);flex:1 1 auto;min-height:120px;overflow-y:auto;text-align:left;
     overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
   #musicFull.list #mfList{display:block}
-  #musicFull.list #mfArtBox, #musicFull.list #mfViz, #musicFull.list #mfKind{display:none}
+  #musicFull.list #mfArtBox, #musicFull.list #mfViz, #musicFull.list #mfKind, #musicFull.list #mfLyrics{display:none}
   #mfFullBtn{display:none}
   /* Docked in the Lens as its "now playing" tab */
   #lens .body{container-type:size}
@@ -373,7 +397,9 @@
   #musicFull.inlens #mfClose{display:none}
   #musicFull.inlens #mfFullBtn{display:grid;position:absolute;top:10px;left:10px;width:38px;height:38px;border-radius:50%;
     place-items:center;background:rgba(255,255,255,.07)}
-  #musicFull.inlens #mfListBtn{top:10px;right:10px;height:38px}
+  #musicFull.inlens #mfTop{top:10px;right:10px}
+  #musicFull.inlens #mfListBtn, #musicFull.inlens #mfLyrBtn{height:38px}
+  #musicFull.inlens #mfLyrics{font-size:15.5px}
   #musicFull.inlens #mfArtBox{width:min(64cqw, 34cqh, 300px);cursor:zoom-in}
   #musicFull.inlens #mfTitle{font-size:17px} #musicFull.inlens #mfSub{font-size:13.5px;margin-top:-5px}
   #musicFull.inlens #mfViz{height:46px}
@@ -384,7 +410,19 @@
     #musicFull.inlens #mfKind, #musicFull.inlens #mfCredit{display:none}
     #musicFull.inlens{gap:6px;justify-content:flex-start}
     #musicFull.inlens #mfArtBox{width:min(50cqw, 28cqh, 220px)}
+    #musicFull.inlens.timed:not(.lyr) #mfViz{display:none}      /* room for the lyrics */
+    #musicFull.inlens.timed #mfArtBox{width:min(36cqw, 17cqh, 160px)}
+    #musicFull.inlens.timed #mfSub{display:none}
+    #musicFull.inlens{padding-bottom:8px}
+    #musicFull.inlens .ctl3 button{width:44px;height:44px}
+    #musicFull.inlens #mfPlay{width:50px!important;height:50px!important}
+    #musicFull.inlens.timed #mfLyrics{height:3.3em;font-size:15px}
+    #musicFull.inlens #mfSource, #musicFull.inlens.lyr #mfSub{display:none}
+    #musicFull.inlens.lyr{padding-top:52px}
   }
+  #musicFull.inlens #mfTitle{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;flex:0 0 auto}
+  #musicFull.inlens.lyr #mfLyrics{min-height:0;font-size:18px}
+  #musicFull.inlens.lyr #mfLyrLines{padding:25% 0}
   #musicFull.list{justify-content:flex-start}
   #mfList h4{margin:14px 4px 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:600;
     display:flex;justify-content:space-between;align-items:baseline}
@@ -446,11 +484,16 @@
   <div id="mfBack" aria-hidden="true"><div id="mfBg"></div><canvas id="mfAura"></canvas><canvas id="mfSparks"></canvas></div>
   <button id="mfClose" type="button" aria-label="Close" title="Close (Esc)"><svg class="line" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
   <button id="mfFullBtn" type="button" aria-label="Full screen" title="Full screen"><svg class="line" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>
+  <div id="mfTop">
+    <button id="mfLyrBtn" type="button" aria-pressed="false" hidden><svg class="line" viewBox="0 0 24 24"><path d="M4 6h16M4 11h10M4 16h13M4 21h7"/></svg>Lyrics</button>
   <button id="mfListBtn" type="button" aria-pressed="false"><svg class="line" viewBox="0 0 24 24"><path d="M4 6h12M4 12h12M4 18h8M18 15v6l4-3z"/></svg>Queue</button>
+  </div>
   <div id="mfKind"></div>
   <div id="mfArtBox"><img id="mfGlow" alt="" referrerpolicy="no-referrer"><img id="mfArt" alt="" referrerpolicy="no-referrer"></div>
   <div id="mfTitle"></div>
   <div id="mfSub"></div>
+  <div id="mfLyrics" hidden><div id="mfLyrLines"></div></div>
+  <div id="mfLyrBar"><button id="mfLyrSooner" type="button" title="Show the lyrics sooner">‹ Sooner</button><a id="mfLyrCredit" href="https://lrclib.net/" target="_blank" rel="noopener noreferrer">Lyrics from LRCLIB</a><button id="mfLyrLater" type="button" title="Show the lyrics later">Later ›</button></div>
   <div id="mfList" aria-label="Queue and history"></div>
   <canvas id="mfViz" title="Tap for another look" aria-hidden="true"></canvas>
   <div id="mfTime"><span id="mfCur">0:00</span><input type="range" id="mfSeek" min="0" max="1" step="1" value="0" aria-label="Position"><span id="mfDur">0:00</span></div>
@@ -582,7 +625,7 @@
   <label for="musicUrl">Music server address</label>
   <input type="text" id="musicUrl">
   <label for="musicFx">Now playing effects</label>
-  <select id="musicFx"><option value="auto">Automatic (lighter on phones)</option><option value="full">Full: moving colours, particles, sparks</option><option value="light">Light: the artwork moves and glows</option><option value="off">Off</option></select>
+  <select id="musicFx"><option value="auto">Automatic (lighter on phones)</option><option value="full">Full: moving colours, particles and sparks</option><option value="light">Light: particles and sparks, the artwork moves and glows</option><option value="off">Off</option></select>
 
   <h3>Face</h3>
   <label for="avatarUrl">Avatar — a .glb, or a LAM .zip (blank uses the built-in head)</label>
@@ -2557,7 +2600,8 @@ const music = (() => {
     const body = JSON.stringify({ ev, ...extra, title:it ? it.title.slice(0, 60) : '', kind:it ? it.kind : '',
       t:+el.currentTime.toFixed(1), rs:el.readyState, ns:el.networkState, paused:el.paused, want, held, state,
       fx:fxLevel(), lens:document.body.classList.contains('lens-music'), hidden:document.hidden });
-    try { navigator.sendBeacon(base() + '/log', new Blob([body], { type:'text/plain' })); } catch {}
+    // fetch, not sendBeacon: Safari sends beacons without the page's login
+    fetch(base() + '/log', { method:'POST', body, keepalive:true, headers:{ 'Content-Type':'text/plain' } }).catch(() => {});
   }
   ['playing', 'waiting', 'stalled', 'suspend', 'ended', 'emptied'].forEach(ev =>
     el.addEventListener(ev, () => { if (el.src !== keepAlive.url()) report(ev); }));
@@ -2618,6 +2662,7 @@ const music = (() => {
     clock();
     kick();
     renderList();
+    syncLyrics(true);
     const ms = navigator.mediaSession;
     if (ms){
       try {
@@ -2637,6 +2682,7 @@ const music = (() => {
     el.load();
     loading(true);
     loadLevels(it);
+    loadLyrics(it);
     paint();
   }
   function loading(on){ card.classList.toggle('loading', on); full.classList.toggle('loading', on); }
@@ -2721,7 +2767,7 @@ const music = (() => {
   function pause(){ want = false; hush(); paint(); }
   function resume(){ if (!cur()) return false; want = true; paint(); go(); return true; }
   function stop(){
-    want = false; queue = []; idx = -1; lv = null; lvFor = null; tap = null; sparks.length = 0;
+    want = false; queue = []; idx = -1; lv = null; lvFor = null; tap = null; sparks.length = 0; lyr = null; lyrFor = null; showLyrics();
     quiet(); el.pause(); el.removeAttribute('src'); el.load();
     paint();
     if (navigator.mediaSession){ try { navigator.mediaSession.metadata = null; navigator.mediaSession.playbackState = 'none'; } catch {} }
@@ -3021,8 +3067,8 @@ const music = (() => {
   const reduce = matchMedia('(prefers-reduced-motion: reduce)');
   const phone = matchMedia('(pointer: coarse)').matches;
   /* Setup → Music → Now playing effects. Phones get the light set by
-     default: they're already drawing the avatar, and the full set (a
-     canvas wash and particles) is a lot more for the GPU. */
+     default (particles, sparks, the artwork moving): they're already
+     drawing the avatar, and the colour wash is the costly part. */
   const fxLevel = () => { const v = CFG.musicFx || 'auto'; return v === 'auto' ? (phone ? 'light' : 'full') : v; };
   const DEF_PAL = [[127, 214, 196], [148, 124, 255], [255, 170, 96]];
   let pal = DEF_PAL, palFor = null, sprites = null;
@@ -3072,7 +3118,7 @@ const music = (() => {
   for (let i = 0, n = reduce.matches ? 24 : 64; i < n; i++)
     motes.push({ x:Math.random(), y:Math.random(), z:0.25 + Math.random() * 0.75, ph:Math.random() * 6.283, c:(Math.random() * 4) | 0 });
   function burst(power){
-    if (reduce.matches || fxLevel() !== 'full' || full.classList.contains('list')) return;
+    if (reduce.matches || fxLevel() === 'off' || full.classList.contains('list') || full.classList.contains('lyr')) return;
     const fr = full.getBoundingClientRect(), ar = $('mfArtBox').getBoundingClientRect();
     if (!ar.width) return;
     const cx = ar.left - fr.left + ar.width / 2, cy = ar.top - fr.top + ar.height / 2, rad = ar.width * 0.45;
@@ -3136,7 +3182,7 @@ const music = (() => {
   let fxAt = 0;
   function fx(now){
     const level = fxLevel();
-    if (level !== 'full' && sparkCv.width) sparkCv.width = 0;     // clear what the full set drew
+    if (level === 'off' && sparkCv.width) sparkCv.width = 0;      // clear the last particles
     if (level === 'off' || el.paused){                  // nothing moves while it's paused
       if (level === 'off'){ artBox.style.transform = ''; glow.style.opacity = ''; }
       return;
@@ -3152,8 +3198,7 @@ const music = (() => {
       glow.style.opacity = Math.min(1, 0.28 + lvl.all * 0.7 + lvl.beat * 0.2).toFixed(3);
       glow.style.transform = 'scale(' + (1.03 + lvl.bass * 0.12 + lvl.beat * 0.06).toFixed(4) + ')';
     }
-    if (level !== 'full') return;
-    aura(still ? 0 : t);
+    if (level === 'full') aura(still ? 0 : t);         // the colour wash is the costly part
     particles(t, dt, still);
   }
 
@@ -3181,7 +3226,7 @@ const music = (() => {
     const fxv = fxOn();
     full.classList.toggle('fx', fxv && fxLevel() === 'full');
     if (fxv){
-      draw($('mfViz'), pal[0], now); fx(now);
+      draw($('mfViz'), pal[0], now); fx(now); syncLyrics();
       if (sparks.length || lvl.beat > 0.01) moving = true;
     }
     if (moving || !el.paused || now - modeAt < 1400) raf = requestAnimationFrame(frame);
@@ -3306,10 +3351,90 @@ const music = (() => {
   }
   $('mfListBtn').onclick = () => {
     const on = !full.classList.contains('list');
+    if (on) setLyr(false);
     full.classList.toggle('list', on); $('mfListBtn').setAttribute('aria-pressed', String(on));
     renderList();
     if (on) $('mfList').scrollTop = 0;
   };
+
+  /* ---- lyrics, from the music service (LRCLIB), lit up line by line ---- */
+  let lyr = null, lyrFor = null, lyrIdx = -2, lyrOff = 0, lyrTouched = 0;
+  const lyrBox = $('mfLyrics'), lyrLines = $('mfLyrLines');
+  async function loadLyrics(it){
+    lyr = null; lyrFor = it; lyrOff = 0; showLyrics();
+    if (!it.lyrics) return;
+    for (let i = 0; i < 3 && lyrFor === it; i++){             // the service is sometimes busy: try again
+      try {
+        const r = await fetch(new URL(it.lyrics, base() + '/').href);
+        if (r.ok){ const j = await r.json(); if (lyrFor === it && (j.lines || j.plain)) lyr = j; break; }
+        if (r.status === 404) break;
+      } catch {}
+      await new Promise(res => setTimeout(res, 5000));
+    }
+    if (lyrFor === it) showLyrics();
+  }
+  function showLyrics(){
+    const timed = !!(lyr && lyr.lines), any = !!(lyr && (lyr.lines || lyr.plain));
+    full.classList.toggle('timed', timed);
+    $('mfLyrBtn').hidden = !any;
+    if (!any && full.classList.contains('lyr')) full.classList.remove('lyr');
+    lyrLines.textContent = '';
+    if (any){
+      const rows = timed ? lyr.lines : lyr.plain.split('\n').map(l => [null, l]);
+      for (const [t, text] of rows){
+        const d = document.createElement('div');
+        d.textContent = text || '♪'; if (!text) d.className = 'gap';
+        if (t != null) d.dataset.t = t;
+        lyrLines.append(d);
+      }
+    }
+    lyrBox.hidden = !(timed || (any && full.classList.contains('lyr')));
+    lyrCredit();
+    lyrIdx = -2; syncLyrics(true);
+  }
+  function lyrCredit(){
+    const o = Math.round(lyrOff * 10) / 10;
+    $('mfLyrCredit').textContent = 'Lyrics from LRCLIB' + (o ? ' · ' + (o > 0 ? o + ' s sooner' : -o + ' s later') : '');
+  }
+  function setLyr(on){
+    full.classList.toggle('lyr', on); $('mfLyrBtn').setAttribute('aria-pressed', String(on));
+    if (on){ full.classList.remove('list'); $('mfListBtn').setAttribute('aria-pressed', 'false'); }
+    lyrBox.hidden = !(full.classList.contains('timed') || (on && lyr));
+    lyrTouched = 0; lyrIdx = -2; syncLyrics(true); kick();
+  }
+  /* Called every frame while the view shows, and on timeupdate otherwise:
+     only touches the page when the line changes. The line being sung also
+     takes the card's second line, so it reads from the small card too. */
+  function syncLyrics(force){
+    const it = cur();
+    if (!lyr || !lyr.lines || !it){ return; }
+    const L = lyr.lines, t = el.currentTime + lyrOff + 0.15;     // a hair early reads better
+    let lo = 0, hi = L.length - 1, i = -1;
+    while (lo <= hi){ const m = (lo + hi) >> 1; if (L[m][0] <= t){ i = m; lo = m + 1; } else hi = m - 1; }
+    if (i === lyrIdx && !force) return;
+    const kids = lyrLines.children;
+    if (kids[lyrIdx]) kids[lyrIdx].classList.remove('on');
+    lyrIdx = i;
+    const line = i >= 0 ? L[i][1] : '';
+    $('musicSub').textContent = line && !el.paused ? '♪ ' + line : (it.subtitle || KIND[it.kind] || '');
+    if (kids[i]) kids[i].classList.add('on');
+    if (lyrBox.hidden || performance.now() - lyrTouched < 4000) return;   // they're scrolling through it
+    const k = kids[Math.max(0, i)];
+    if (k) lyrBox.scrollTo({ top: k.offsetTop - lyrBox.clientHeight / 2 + k.offsetHeight / 2, behavior: force ? 'auto' : 'smooth' });
+  }
+  ['timeupdate', 'seeked', 'pause', 'play'].forEach(ev => el.addEventListener(ev, () => syncLyrics(ev !== 'timeupdate')));
+  ['wheel', 'touchmove'].forEach(ev => lyrBox.addEventListener(ev, () => { lyrTouched = performance.now(); }, { passive:true }));
+  $('mfLyrBtn').onclick = () => setLyr(!full.classList.contains('lyr'));
+  lyrBox.addEventListener('click', e => {
+    if (!full.classList.contains('lyr')){ setLyr(true); return; }       // the three-line strip opens the full view
+    const d = e.target.closest && e.target.closest('[data-t]');
+    if (d && full.classList.contains('timed')){                          // a line: play from there
+      try { el.currentTime = Math.max(0, +d.dataset.t - lyrOff); } catch {}
+      lyrTouched = 0; syncLyrics(true);
+    }
+  });
+  $('mfLyrSooner').onclick = () => { lyrOff += 0.5; lyrCredit(); syncLyrics(true); };
+  $('mfLyrLater').onclick = () => { lyrOff -= 0.5; lyrCredit(); syncLyrics(true); };
 
   // The card can be dragged to any corner, like the camera tile.
   pinnable(card, { key:'musicSpot', spots:['tl', 'tr', 'bl', 'br'], def:'tl',
