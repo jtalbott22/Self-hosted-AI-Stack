@@ -129,6 +129,9 @@ services:
     image: mcr.microsoft.com/playwright:v1.60.0-noble
     container_name: playwright
     command: npx -y playwright@1.60.0 run-server --port 3000 --host 0.0.0.0
+    # A real init as PID 1: npm doesn't reap the browsers' exited child
+    # processes, which pile up as zombies (169 after a day of test runs).
+    init: true
     restart: unless-stopped
 
   # Text-to-speech. On the GPU so the voice starts quickly: on the CPU it
