@@ -663,6 +663,8 @@
   <select id="musicOn"><option value="on">On</option><option value="off">Off</option></select>
   <label for="musicUrl">Music server address</label>
   <input type="text" id="musicUrl">
+  <label for="musicDownload">Download each song before playing it</label>
+  <select id="musicDownload"><option value="auto">Automatic (on for phones)</option><option value="on">On: steady on mobile data, a short wait before each song</option><option value="off">Off: stream it, starts sooner</option></select>
   <label for="musicFx">Now playing effects</label>
   <select id="musicFx"><option value="auto">Automatic (lighter on phones)</option><option value="full">Full: moving colours, particles and sparks</option><option value="light">Light: particles and sparks, the artwork moves and glows</option><option value="off">Off</option></select>
 
@@ -796,6 +798,7 @@ const DEFAULTS = {
   lensKey: '',
   musicOn: 'on',
   musicFx: 'auto',
+  musicDownload: 'auto',
   camBg: 'off',
   camBlur: '10',
   camDim: '25',
@@ -2607,10 +2610,18 @@ let followUp = -1;                                     // the generation that sh
 let listenSoon = false;                                // a follow-up listen is about to open
 const speakerDelayMs = () => 1000 * Math.max(0.2, parseFloat(CFG.speakerDelay) || 0.4);
 const endsWithQuestion = s => /\?["'”’)\]]*$/.test(plainReply(s).trim());
+/* How long each phrase of a reply took to arrive (Kokoro, plus the lip-sync
+   model for a LAM face), reported once the reply is over: over mobile data
+   these gaps are heard as choppy speech. */
+const speechMs = [];
 function settle(){
   // back to idle once nothing is streaming, queued, or playing
   if (!streaming && !draining && !speaking && !queue.length &&
       (state === 'thinking' || state === 'working' || state === 'speaking')){
+    if (speechMs.length){
+      music.note('speech', { phrases:speechMs.length, avgMs:Math.round(speechMs.reduce((a, b) => a + b, 0) / speechMs.length), maxMs:Math.max(...speechMs) });
+      speechMs.length = 0;
+    }
     // Music waits while a follow-up listen is coming, instead of starting and stopping again.
     const listen = followUp === generation && !music.active();
     if (followUp === generation) followUp = -1;
@@ -2779,11 +2790,11 @@ setMuted(muted);
 function enqueue(sentence, force){
   if (muted && !force) return;
   const t = clean(sentence); if (!t) return;
-  const gen = generation;
+  const gen = generation, t0 = performance.now();
   const job = (CFG.lipMode === 'audio'
     ? fetchPlain(t)
     : fetchTimed(t).catch(() => fetchPlain(t))
-  ).then(withA2E);
+  ).then(withA2E).then(c => { speechMs.push(Math.round(performance.now() - t0)); return c; });
   queue.push({ text:t, gen, job, force:!!force });
   if (!draining) drain();
 }
@@ -3335,19 +3346,63 @@ const music = (() => {
     }
   }
 
+  /* Songs are downloaded whole and played from memory, on phones by default.
+     Streamed, every byte comes from the server as it plays: over mobile data
+     (through a CDN, from a home connection) the phone's player stalls now and
+     then, heard as stutter, without ever saying it ran dry, and the test page's
+     cached file played cleanly where the stream didn't. The next song is
+     fetched during this one's last minute. Radio and podcasts still stream. */
+  const downloads = () => { const v = CFG.musicDownload || 'auto'; return v === 'auto' ? phone : v === 'on'; };
+  const songs = new Map();                             // stream url -> promise of a blob: url
+  let pending = null;                                  // the item whose download playback waits for
+  function song(src){
+    if (!songs.has(src)) songs.set(src, (async () => {
+      const t0 = performance.now();
+      const r = await fetch(src);
+      if (!r.ok) throw new Error('status ' + r.status);
+      const b = await r.blob();
+      const s = (performance.now() - t0) / 1000, mb = b.size / 1048576;
+      report('download', { mb:+mb.toFixed(1), s:+s.toFixed(1), mbps:+(mb * 8 / Math.max(s, 0.01)).toFixed(1) });
+      return URL.createObjectURL(new Blob([b], { type:'audio/mp4' }));
+    })());
+    const p = songs.get(src);
+    p.catch(() => songs.delete(src));
+    return p;
+  }
+  function keepSongs(...srcs){                          // drop all but these, freeing memory
+    for (const [k, p] of songs) if (!srcs.includes(k)){ songs.delete(k); p.then(u => URL.revokeObjectURL(u), () => {}); }
+  }
+  const srcOf = it => new URL(it.url, base() + '/').href;
+
   function load(i){
     idx = i;
     const it = cur(); if (!it) return;
     quiet();
-    el.src = new URL(it.url, base() + '/').href;
-    el.load();
+    const src = srcOf(it);
+    if (it.kind === 'music' && downloads()){
+      const nx = queue[idx + 1];
+      keepSongs(src, nx && nx.kind === 'music' ? srcOf(nx) : null);
+      pending = it;
+      el.pause();                                      // the last song waits, paused, until this one is in
+      const start = u => {
+        if (cur() !== it) return;
+        pending = null;
+        el.src = u; el.load();
+        if (want && !held && state === 'idle') go();
+      };
+      song(src).then(start, e => { report('download-failed', { msg:String(e.message || e).slice(0, 80) }); start(src); });
+    } else {
+      pending = null;
+      el.src = src;
+      el.load();
+    }
     loading(true);
     loadLevels(it);
     loadLyrics(it);
     paint();
   }
   function loading(on){ card.classList.toggle('loading', on); full.classList.toggle('loading', on); }
-  ['canplay', 'playing', 'error', 'emptied'].forEach(ev => el.addEventListener(ev, () => loading(false)));
+  ['canplay', 'playing', 'error', 'emptied'].forEach(ev => el.addEventListener(ev, () => { if (!pending) loading(false); }));
   /* The songs after the first come separately (the service looks them up
      while the first one downloads), and join the queue when they're in. */
   async function loadMore(path, first){
@@ -3378,13 +3433,14 @@ const music = (() => {
     const left = (isFinite(el.duration) ? el.duration : (it.duration || 0)) - el.currentTime;
     if (left > 60 || left <= 0) return;
     prefetched = nx;
-    fetch(base() + '/prefetch/' + nx.url.split('/').pop(), { method:'POST' }).catch(() => {});
+    if (downloads()) song(srcOf(nx)).catch(() => {});   // the server fetches it from YouTube as part of this
+    else fetch(base() + '/prefetch/' + nx.url.split('/').pop(), { method:'POST' }).catch(() => {});
   }
 
   /* Plays when nothing else is going on; otherwise it starts once the avatar is done. */
   function go(){
     clearTimeout(resumeT);
-    if (!want || !cur() || held) return;
+    if (!want || !cur() || held || pending === cur()) return;   // still downloading: it starts when that's done
     const it = cur();
     if (it.live && pausedAt && Date.now() - pausedAt > 10000) el.src = el.src;   // rejoin the live stream
     pausedAt = 0;
@@ -3451,7 +3507,7 @@ const music = (() => {
   /* Should be playing but isn't — most often the next song on an iPhone,
      whose play() can quietly fail when it's called as the last one ends. */
   setInterval(() => {
-    if (want && !held && !listenSoon && !rec && state === 'idle' && cur() &&
+    if (want && !held && !listenSoon && !rec && state === 'idle' && cur() && pending !== cur() &&
         el.paused && !el.ended && el.readyState >= 2) el.play().catch(() => {});
   }, 2000);
   /* Every 30 s of playback: a report with the Performance tests switches, how
@@ -3476,7 +3532,7 @@ const music = (() => {
       if (it && rate < 0.85 && jank.waits <= 1 && el.readyState >= 2 && !it.live && it !== jank.told){
         jank.told = it;
         report('stuck-audio', { rate:+rate.toFixed(2) });
-        showError('Playback is stuttering: the phone’s audio is stuck, not the music. Swipe this app away (or close Safari) and open it again to fix it.');
+        showError('Playback is falling behind. If it keeps stuttering, swipe this app away (or close Safari) and open it again.');
       }
       jank.n = jank.max = jank.waits = 0; jank.since = now; jank.ct = el.currentTime;
     }
@@ -4208,7 +4264,7 @@ const music = (() => {
       ' It starts the moment you stop talking, so reply with just a few words. Do not list or read out details.';
   }
 
-  return { prime, onState, pause, replay, enabled, active: () => want && !!cur(), perfChanged: () => kick(),
+  return { prime, onState, pause, replay, enabled, active: () => want && !!cur(), perfChanged: () => kick(), note: report,
            tools: () => enabled() ? TOOLS : [], handles: n => n === 'play_music' || n === 'music_control', run };
 })();
 
