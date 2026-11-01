@@ -999,9 +999,6 @@ const keepAlive = (() => {
       if (!el){ el = new Audio(this.url()); el.loop = true; el.setAttribute('playsinline', ''); }
       if (el.paused) el.play().catch(() => {});
     },
-    /* Only needed while the avatar talks: it's stopped between turns so music
-       plays alone. (Once a tap has started it, it can start again without one.) */
-    stop(){ if (el && !el.paused) el.pause(); },
     state(){ return !el ? 'none' : el.paused ? 'paused' : 'playing'; }
   };
 })();
@@ -1037,12 +1034,10 @@ class LipSync {
     this.restT = setTimeout(() => {
       if (state !== 'idle' || speaking) return;
       if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
-      keepAlive.stop();                                // the same goes for the silent loop
     }, ms);
   }
   wake(){
     clearTimeout(this.restT);
-    keepAlive.start();
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
   }
 
@@ -3391,7 +3386,7 @@ const music = (() => {
 
   el.addEventListener('playing', () => {
     failures = 0; liveTap(); kick(); warmNext();
-    if (state === 'idle' && !tap && el.src !== keepAlive.url()) lipsync.rest(0);   // music plays alone: no Web Audio, no silent loop
+    if (state === 'idle' && !tap && el.src !== keepAlive.url()) lipsync.rest(0);   // no Web Audio running next to the music
     const it = cur();
     if (it && !it._logged){ it._logged = true; remember(it); }
     if (!want && it){ want = true; paint(); }             // started from the lock screen or the car
@@ -3872,9 +3867,9 @@ const music = (() => {
   const ms = navigator.mediaSession;
   if (ms){
     const on = (a, f) => { try { ms.setActionHandler(a, f); } catch {} };
-    on('play', () => resume());
-    on('pause', () => pause());
-    on('stop', () => stop());
+    on('play', () => { report('remote-play'); resume(); });            // from the lock screen, the car or iOS
+    on('pause', () => { report('remote-pause'); pause(); });
+    on('stop', () => { report('remote-stop'); stop(); });
     on('nexttrack', () => next());
     on('previoustrack', () => { if (el.currentTime > 5) el.currentTime = 0; else next(-1); });
   }
