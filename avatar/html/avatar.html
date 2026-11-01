@@ -273,6 +273,26 @@
   label.check input{margin-top:2px;accent-color:var(--live)}
   #settings code{font-size:12px;background:var(--panel);padding:1px 5px;border-radius:4px}
   #settings a{color:var(--live)}
+  /* ---- guided CarPlay test: a sheet over the bottom, the face stays in view ---- */
+  #carTest{position:fixed;left:0;right:0;bottom:0;z-index:60;padding:16px 16px calc(16px + env(safe-area-inset-bottom));
+    background:rgba(14,18,24,.96);border-top:1px solid var(--line);border-radius:18px 18px 0 0;
+    max-height:70vh;overflow:auto;box-shadow:0 -10px 30px rgba(0,0,0,.4)}
+  #carTest[hidden],#carTest [hidden]{display:none}
+  #carTest .ctHead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:15px}
+  #ctClock{font-variant-numeric:tabular-nums;color:var(--dim);font-size:15px}
+  #ctName{font-size:22px;font-weight:600;margin:8px 0 4px;line-height:1.25}
+  #ctNote{color:var(--dim);font-size:14px;margin:0 0 12px;line-height:1.45}
+  #carTest button{font:inherit;color:var(--text);border-radius:14px;border:1px solid var(--line);background:var(--panel);cursor:pointer}
+  #carTest .ctRow{display:flex;gap:12px;margin:6px 0}
+  #carTest .ctRow button{flex:1}
+  #ctAsk button{min-height:84px;font-size:22px;font-weight:600}
+  #ctGood{background:#173528!important;border-color:#2c6b4d!important}
+  #ctBad{background:#3a2a12!important;border-color:#7a5a22!important}
+  #ctAsk button.on{outline:3px solid var(--text)}
+  #carTest .ctBig{width:100%;min-height:84px;font-size:24px;font-weight:600;background:#20303a;border-color:#31545a;margin:6px 0}
+  #carTest .small button{padding:11px;font-size:15px}
+  #ctResults{margin:10px 0 0;padding-left:22px;font-size:14px;line-height:1.6}
+  #ctResults b{font-weight:600}
   p.note.warn{color:#e8b84b;display:none}
   #settings input[type=file]{width:100%;color:var(--text);font-size:13px}
   #makerBar:not([hidden]){display:block;width:100%;height:8px;margin-top:14px;accent-color:var(--live)}
@@ -495,6 +515,15 @@
 <div id="callBar" aria-hidden="true"><span id="callName"></span><span class="t" id="callTime">0:00</span></div>
 <div id="selfTile" aria-label="Your camera"><video id="selfVideo" playsinline muted autoplay></video></div>
 <div id="caption" class="empty"><div id="capGrip" title="Drag to move"><span></span></div><div id="capLog" aria-live="polite"></div></div>
+<div id="carTest" hidden role="dialog" aria-label="Guided CarPlay test">
+  <div class="ctHead"><b id="ctStep">Guided CarPlay test</b><span id="ctClock"></span></div>
+  <p id="ctName"></p>
+  <p id="ctNote"></p>
+  <div class="ctRow" id="ctAsk" hidden><button id="ctGood">Smooth</button><button id="ctBad">Stutters</button></div>
+  <button id="ctReady" class="ctBig">Ready</button>
+  <div class="ctRow small"><button id="ctSkip" hidden>Next step</button><button id="ctStop">Stop test</button></div>
+  <ol id="ctResults" hidden></ol>
+</div>
 <div id="typed"><input id="typedInput" type="text" placeholder="Type a message and press Enter" autocomplete="off"></div>
 
 <div id="topLeft">
@@ -747,6 +776,8 @@
 
   <h3>Troubleshooting</h3>
   <p class="note" id="debugLinks" hidden><a id="carplayTest" href="carplay-test.html" target="_blank" rel="noopener">CarPlay audio test</a>: a plain audio player with nothing else on the page. If it stutters over wireless CarPlay too, the problem is Safari and the phone’s link to the car, not this page.</p>
+  <div class="row"><button id="carTestBtn">Start the guided CarPlay test</button></div>
+  <p class="note">Plays one song through each setup below in turn, about 75 seconds each, and asks whether it was smooth. Open the app with <code>?cartest</code> on the address to start it straight away. Have a passenger tap, or tap only when it’s safe.</p>
   <p class="note"><b>Performance tests.</b> Switch parts of the page off to find what upsets playback. They take effect at once, stay off on this device until you switch them back on, and are noted in the playback reports on the server.</p>
   <label class="check"><input type="checkbox" class="perf" data-k="face"> Face drawing</label>
   <label class="check"><input type="checkbox" class="perf" data-k="viz"> Visualizer and effects (bars, particles, moving artwork)</label>
@@ -3352,7 +3383,8 @@ const music = (() => {
      then, heard as stutter, without ever saying it ran dry, and the test page's
      cached file played cleanly where the stream didn't. The next song is
      fetched during this one's last minute. Radio and podcasts still stream. */
-  const downloads = () => { const v = CFG.musicDownload || 'auto'; return v === 'auto' ? phone : v === 'on'; };
+  let testDl = null;                                   // the guided test's choice, when it's running
+  const downloads = () => { if (testDl !== null) return testDl; const v = CFG.musicDownload || 'auto'; return v === 'auto' ? phone : v === 'on'; };
   const songs = new Map();                             // stream url -> promise of a blob: url
   let pending = null;                                  // the item whose download playback waits for
   function song(src){
@@ -4264,7 +4296,142 @@ const music = (() => {
       ' It starts the moment you stop talking, so reply with just a few words. Do not list or read out details.';
   }
 
-  return { prime, onState, pause, replay, enabled, active: () => want && !!cur(), perfChanged: () => kick(), note: report,
+  /* ---- Guided CarPlay test ----
+     One song through a series of setups, about 75 s each, with the user
+     tapping Smooth or Stutters. Each step is measured (seconds of song per
+     second of real time, page stalls, times the player ran dry) and reported
+     as test-step; the user's own settings come back at the end. */
+  const carTest = (() => {
+    const ALL = { face:true, viz:true, lyrics:true, tilt:true, keep:true, session:true };
+    const NONE = { face:false, viz:false, lyrics:false, tilt:false, keep:false, session:false };
+    const add = ks => Object.assign({}, NONE, ...ks.map(k => ({ [k]:true })));
+    const STEPS = [
+      { name:'Plain file, everything off', note:'The test page’s file, streamed from the web server: the baseline that played cleanly before.', file:true, perf:NONE },
+      { name:'Song downloaded, everything off', note:'The song comes from the music service, downloaded first and played from the phone’s memory.', dl:true, perf:NONE },
+      { name:'+ Face drawing', dl:true, perf:add(['face']) },
+      { name:'+ Visualizer and effects', dl:true, perf:add(['face', 'viz']) },
+      { name:'+ Lyrics following', dl:true, perf:add(['face', 'viz', 'lyrics']) },
+      { name:'+ Tilt parallax', dl:true, perf:add(['face', 'viz', 'lyrics', 'tilt']) },
+      { name:'+ Silent keep-alive loop', dl:true, perf:add(['face', 'viz', 'lyrics', 'tilt', 'keep']) },
+      { name:'+ Audio mode: everything on', note:'Everything the app normally does, with the song downloaded first.', dl:true, perf:ALL },
+      { name:'Everything on, song streamed', note:'The way songs played before downloads: streamed as they play.', dl:false, perf:ALL }
+    ];
+    const fast = new URLSearchParams(location.search).get('cartest') === 'fast';   // for trying the test itself
+    const SECS = fast ? 12 : 75, MIN = fast ? 6 : 30;
+    const box = $('carTest');
+    let saved = null, item = null, fileUrl = null, n = -1, timer = 0, meter = 0, m = null, answer = null, results = [];
+
+    function show(step, name, note){
+      $('ctStep').textContent = step; $('ctName').textContent = name; $('ctNote').textContent = note || '';
+    }
+    function open(){
+      if (!box.hidden) return;
+      saved = { ...PERF };
+      results = []; n = -1;
+      $('ctResults').hidden = true; $('ctResults').replaceChildren();
+      $('ctAsk').hidden = true; $('ctSkip').hidden = true; $('ctReady').hidden = false; $('ctClock').textContent = '';
+      show('Guided CarPlay test', 'Connect to CarPlay, then tap Ready',
+           'One song plays through ' + STEPS.length + ' setups, about ' + SECS + ' seconds each. During each one, tap Smooth or Stutters. Your settings come back when it’s done. Have a passenger tap, or tap only when it’s safe.');
+      $('settings').classList.remove('open');
+      box.hidden = false;
+    }
+    async function ready(){
+      lipsync.unlock();                                  // this tap lets the page play sound
+      $('ctReady').hidden = true;
+      show('Getting ready', 'Finding the test song…', '');
+      try {
+        const r = await fetch(base() + '/search?' + new URLSearchParams({ q:'Black Sabbath Paranoid', kind:'music', episode:'' }));
+        const j = await r.json();
+        item = (j.items || [])[0];
+        if (!item) throw new Error('the music service found nothing');
+        const f = new URL('carplay-test.m4a', location.href).href;
+        fileUrl = await fetch(f, { method:'HEAD', cache:'no-store' }).then(x => x.ok ? f : null).catch(() => null);
+        report('test-start', { steps:STEPS.length });
+        step(fileUrl ? 0 : 1);
+      } catch (e){
+        show('Couldn’t start', 'The test song didn’t load', String(e.message || e) + '. Check the connection and tap Ready again.');
+        $('ctReady').hidden = false;
+      }
+    }
+    function step(i){
+      clearInterval(meter); clearTimeout(timer);
+      n = i;
+      if (n >= STEPS.length) return finish();
+      const s = STEPS[n];
+      setPerf(s.perf);
+      testDl = !!s.dl;
+      answer = null;
+      for (const b of $('ctAsk').children) b.classList.remove('on');
+      $('ctAsk').hidden = false; $('ctSkip').hidden = false;
+      show('Step ' + (n + 1) + ' of ' + STEPS.length, s.name, (s.note ? s.note + ' ' : '') + 'Listen, then tap Smooth or Stutters.');
+      const it = s.file ? { ...item, url:fileUrl, title:'CarPlay audio test file', subtitle:'Plain file', art:'' } : item;
+      play([it], null, !s.file);
+      // measure once it's actually playing
+      m = null;
+      const t0 = performance.now();
+      let last = t0;
+      meter = setInterval(() => {
+        const now = performance.now(), late = now - last - 100; last = now;
+        const sec = Math.floor((now - t0) / 1000);
+        $('ctClock').textContent = Math.max(0, SECS - sec) + ' s';
+        if (!m){ if (!el.paused && el.currentTime > 0.3) m = { t:now, ct:el.currentTime, stalls:0, worst:0, dry:0 }; }
+        else if (late > 150){ m.stalls++; m.worst = Math.max(m.worst, Math.round(late)); }
+        if (sec >= SECS || (answer && sec >= MIN)) done();
+      }, 100);
+    }
+    el.addEventListener('waiting', () => { if (m && !el.paused) m.dry++; });
+    function done(){
+      clearInterval(meter);
+      const s = STEPS[n], now = performance.now();
+      const rate = m ? +((el.currentTime - m.ct) / ((now - m.t) / 1000)).toFixed(2) : null;
+      const r = { step:n + 1, name:s.name, answer:answer || 'none', rate, stalls:m ? m.stalls : null, worst:m ? m.worst : null,
+                  dry:m ? m.dry : null, secs:m ? Math.round((now - m.t) / 1000) : 0 };
+      results.push(r);
+      report('test-step', r);
+      step(n + 1);
+    }
+    function finish(){
+      clearInterval(meter);
+      testDl = null;
+      setPerf(saved || { face:true, viz:true, lyrics:true, tilt:true, keep:true, session:true });
+      pause();
+      report('test-done', { results:results.map(r => r.step + ':' + r.answer + ':' + r.rate).join(' ') });
+      $('ctAsk').hidden = true; $('ctSkip').hidden = true; $('ctClock').textContent = '';
+      show('Done', 'Thanks — the results are on the server', 'Your settings are back as they were. Tap Close when you’re done reading.');
+      const ol = $('ctResults');
+      ol.replaceChildren(...results.map(r => {
+        const li = document.createElement('li');
+        li.innerHTML = '<b></b> — you said <b></b>' + (r.rate != null ? ', played at ' + Math.round(r.rate * 100) + '% speed' : '');
+        li.children[0].textContent = r.name; li.children[1].textContent = r.answer === 'none' ? 'nothing' : r.answer;
+        return li;
+      }));
+      ol.hidden = false;
+      $('ctStop').textContent = 'Close';
+    }
+    function close(){
+      if (n >= 0 && n < STEPS.length){
+        clearInterval(meter); testDl = null;
+        setPerf(saved || { face:true, viz:true, lyrics:true, tilt:true, keep:true, session:true });
+        pause();
+        report('test-stopped', { at:n + 1, results:results.map(r => r.step + ':' + r.answer + ':' + r.rate).join(' ') });
+      }
+      n = -1; box.hidden = true; $('ctStop').textContent = 'Stop test';
+    }
+    const mark = a => () => {
+      if (n < 0 || n >= STEPS.length) return;
+      answer = a;
+      for (const b of $('ctAsk').children) b.classList.toggle('on', b === (a === 'smooth' ? $('ctGood') : $('ctBad')));
+      $('ctNote').textContent = 'Got it: ' + (a === 'smooth' ? 'smooth' : 'stutters') + '. The next step starts shortly.';
+    };
+    $('ctGood').onclick = mark('smooth');
+    $('ctBad').onclick = mark('stutters');
+    $('ctReady').onclick = ready;
+    $('ctSkip').onclick = () => { if (n >= 0 && n < STEPS.length) done(); };
+    $('ctStop').onclick = close;
+    return { open };
+  })();
+
+  return { prime, onState, pause, replay, enabled, active: () => want && !!cur(), perfChanged: () => kick(), note: report, carTest,
            tools: () => enabled() ? TOOLS : [], handles: n => n === 'play_music' || n === 'music_control', run };
 })();
 
@@ -4365,6 +4532,8 @@ addEventListener('message', e => {
 
 setState('idle');
 caption('', 'Press the microphone or the space bar. Hold the space bar to talk for as long as you like.');
+$('carTestBtn').onclick = () => music.carTest.open();
+if (new URLSearchParams(location.search).has('cartest')) music.carTest.open();
 </script>
 </body>
 </html>
