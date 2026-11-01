@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Avatar — local voice mode</title>
 <!-- Set by the page to a picture of the current face (see homeIcon). -->
 <link rel="apple-touch-icon" id="touchIcon">
@@ -16,6 +16,11 @@
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
+  /* An app, not a document: no double-tap zoom (pinches are stopped in the
+     script), and on touch screens text fields at 16px, below which iOS
+     zooms the page in when you tap one. */
+  html{touch-action:manipulation;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  @media (pointer:coarse){ input,textarea,select{font-size:16px!important} }
   body{
     background:radial-gradient(120% 90% at 50% 8%, #1b2430 0%, var(--ink) 62%), var(--ink);
     color:var(--text); font-family:var(--font); overflow:hidden; -webkit-font-smoothing:antialiased;
@@ -1749,6 +1754,16 @@ const homeIcon = (() => {
   }
   return { refresh };
 })();
+/* No pinch-zoom. iOS Safari ignores the viewport's user-scalable=no, so its
+   pinch gestures are cancelled here; a two-finger move is stopped too, for
+   browsers without them. If the page was zoomed anyway, a double tap no
+   longer zooms it further. */
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend'])
+  document.addEventListener(ev, e => e.preventDefault(), { passive:false });
+document.addEventListener('touchmove', e => {
+  if (e.touches.length > 1 || (e.scale !== undefined && e.scale !== 1)) e.preventDefault();
+}, { passive:false });
+
 const face = new Face($('faceLayer'));
 
 /* Fit the face into the stage. The face is framed for the whole window, so
