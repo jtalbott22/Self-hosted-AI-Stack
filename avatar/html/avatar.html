@@ -272,6 +272,7 @@
   label.check{display:flex;gap:9px;align-items:flex-start;color:var(--text);font-size:13.5px;line-height:1.45;margin:14px 0 4px;cursor:pointer}
   label.check input{margin-top:2px;accent-color:var(--live)}
   #settings code{font-size:12px;background:var(--panel);padding:1px 5px;border-radius:4px}
+  #settings a{color:var(--live)}
   p.note.warn{color:#e8b84b;display:none}
   #settings input[type=file]{width:100%;color:var(--text);font-size:13px}
   #makerBar:not([hidden]){display:block;width:100%;height:8px;margin-top:14px;accent-color:var(--live)}
@@ -741,6 +742,12 @@
     <button id="resetCfg">Reset to site settings</button>
   </div>
   <p class="note" id="siteCfgStatus"></p>
+
+  <div id="debugLinks" hidden>
+  <h3>Troubleshooting</h3>
+  <p class="note">Test pages on this server, for tracking down problems.</p>
+  <p class="note"><a id="carplayTest" href="carplay-test.html" target="_blank" rel="noopener">CarPlay audio test</a>: a plain audio player with nothing else on the page. If it stutters over wireless CarPlay too, the problem is Safari and the phone’s link to the car, not this page.</p>
+  </div>
 </aside>
 
 <script type="module">
@@ -1794,6 +1801,10 @@ for (const ev of ['gesturestart', 'gesturechange', 'gestureend'])
 document.addEventListener('touchmove', e => {
   if (e.touches.length > 1 || (e.scale !== undefined && e.scale !== 1)) e.preventDefault();
 }, { passive:false });
+
+/* Troubleshooting links in Setup, shown only for test pages this server has. */
+fetch('carplay-test.html', { method:'HEAD', cache:'no-store' })
+  .then(r => { if (r.ok) $('debugLinks').hidden = false; }).catch(() => {});
 
 const face = new Face($('faceLayer'));
 
