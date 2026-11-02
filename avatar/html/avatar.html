@@ -3648,29 +3648,43 @@ const music = (() => {
      fetched during this one's last minute. Radio and podcasts still stream. */
   let testDl = null;                                   // the guided test's choice, when it's running
   const downloads = () => { if (testDl !== null) return testDl; const v = CFG.musicDownload || 'auto'; return v === 'auto' ? phone : v === 'on'; };
-  const songs = new Map();                             // stream url -> promise of a blob: url
+  const songs = new Map();                             // stream url -> { p: promise of a blob: url, ac: its AbortController }
   let pending = null;                                  // the item whose download playback waits for
+  let loads = 0, slowT = 0;                            // which load() is current; its give-up timer
+  /* A download that's this slow (a home connection whose upload is busy) is
+     dropped and the song streams instead: playing a little less steadily
+     beats a minute of silence. */
+  const SLOW_S = 12;
   function song(src){
-    if (!songs.has(src)) songs.set(src, (async () => {
-      const t0 = performance.now();
-      const r = await fetch(src);
-      if (!r.ok) throw new Error('status ' + r.status);
-      const b = await r.blob();
-      const s = (performance.now() - t0) / 1000, mb = b.size / 1048576;
-      report('download', { mb:+mb.toFixed(1), s:+s.toFixed(1), mbps:+(mb * 8 / Math.max(s, 0.01)).toFixed(1) });
-      return URL.createObjectURL(new Blob([b], { type:'audio/mp4' }));
-    })());
-    const p = songs.get(src);
-    p.catch(() => songs.delete(src));
-    return p;
+    if (!songs.has(src)){
+      const ac = new AbortController();
+      const p = (async () => {
+        const t0 = performance.now();
+        const r = await fetch(src, { signal: ac.signal });
+        if (!r.ok) throw new Error('status ' + r.status);
+        const b = await r.blob();
+        const s = (performance.now() - t0) / 1000, mb = b.size / 1048576;
+        report('download', { mb:+mb.toFixed(1), s:+s.toFixed(1), mbps:+(mb * 8 / Math.max(s, 0.01)).toFixed(1) });
+        return URL.createObjectURL(new Blob([b], { type:'audio/mp4' }));
+      })();
+      songs.set(src, { p, ac });
+      p.catch(() => { if (songs.get(src)?.p === p) songs.delete(src); });
+    }
+    return songs.get(src).p;
   }
-  function keepSongs(...srcs){                          // drop all but these, freeing memory
-    for (const [k, p] of songs) if (!srcs.includes(k)){ songs.delete(k); p.then(u => URL.revokeObjectURL(u), () => {}); }
+  function dropSong(k){                                 // stops its download (it would share the connection) and frees it
+    const d = songs.get(k); if (!d) return;
+    songs.delete(k); d.ac.abort(); d.p.then(u => URL.revokeObjectURL(u), () => {});
+  }
+  function keepSongs(...srcs){                          // drop all but these
+    for (const k of [...songs.keys()]) if (!srcs.includes(k)) dropSong(k);
   }
   const srcOf = it => new URL(it.url, base() + '/').href;
 
   function load(i){
     idx = i;
+    const id = ++loads;
+    clearTimeout(slowT);
     const it = cur(); if (!it) return;
     quiet();
     const src = srcOf(it);
@@ -3679,13 +3693,23 @@ const music = (() => {
       keepSongs(src, nx && nx.kind === 'music' ? srcOf(nx) : null);
       pending = it;
       el.pause();                                      // the last song waits, paused, until this one is in
-      const start = u => {
-        if (cur() !== it) return;
+      const start = u => {                             // only for this load: an older one's download may finish late
+        if (id !== loads || cur() !== it) return;
+        clearTimeout(slowT);
         pending = null;
         el.src = u; el.load();
         if (want && !held && state === 'idle') go();
       };
-      song(src).then(start, e => { report('download-failed', { msg:String(e.message || e).slice(0, 80) }); start(src); });
+      slowT = setTimeout(() => {
+        if (id !== loads || pending !== it) return;
+        report('download-slow', { after:SLOW_S });
+        dropSong(src);
+        start(src);
+      }, SLOW_S * 1000);
+      song(src).then(start, e => {
+        if (e.name === 'AbortError') return;
+        report('download-failed', { msg:String(e.message || e).slice(0, 80) }); start(src);
+      });
     } else {
       pending = null;
       el.src = src;
