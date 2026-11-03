@@ -584,6 +584,38 @@ docker compose up -d avatar
 
 With the optional avatar maker (`avatar/scripts/avatar_maker.py`) running, you can also make new avatars from the page: **Setup → New avatar from a photo** uploads a photo, and LAM turns it into a new head in about a minute. With the `music` service running, you can also ask the avatar to play songs (YouTube), live radio stations or podcasts. Neither the service nor the page needs an account or an API key.
 
+### What it looks like
+
+These are from a phone. The page works the same on a phone as on a desktop browser.
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/screenshots/avatar-conversation.jpg" alt="Avatar with the conversation panel showing home commands"></td>
+    <td width="33%"><img src="docs/screenshots/avatar-home-lights.jpg" alt="Lens Home tab with a brightness slider for the living room lights"></td>
+    <td width="33%"><img src="docs/screenshots/avatar-home-media.jpg" alt="Lens Home tab with media cards for a streaming player and a TV"></td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Talk or type.</b> The head is lit and lip-synced as it answers. The conversation panel under it keeps each request and reply, and a chip for whatever a reply touched. When nothing matches, the avatar says so, and you can just correct yourself (<i>"Sorry, I meant the living room media player"</i>).</td>
+    <td valign="top"><b>Home control.</b> <i>"Set the living room to 30 percent"</i> changes the lights through Home Assistant and opens a Home tab in the Lens with a tall slider for them. Drag it to adjust, or tap to switch them on or off. The face shrinks into the space above the panel.</td>
+    <td valign="top"><b>Media controls.</b> Players and TVs get a card with only the controls they support: power, play and pause, previous and next, and volume. The card shows what's playing, here a Hulu episode on the living room player.</td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="25%"><img src="docs/screenshots/avatar-music-lens.jpg" alt="Now playing tab in the Lens with artwork, visualizer and controls"></td>
+    <td width="25%"><img src="docs/screenshots/avatar-music-fullscreen.jpg" alt="Full-screen music player with large artwork and a link to YouTube"></td>
+    <td width="25%"><img src="docs/screenshots/avatar-music-queue.jpg" alt="Music queue showing now playing and 25 songs up next"></td>
+    <td width="25%"><img src="docs/screenshots/avatar-lens-notebook.jpg" alt="Lens tab with a weather briefing from a notebook tool, and the mini player above the face"></td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Music.</b> Ask for a song and it plays from YouTube, on a <b>♪</b> tab in the Lens with the artwork, a live visualizer, a seek bar and controls. Tabs from earlier requests stay along the top.</td>
+    <td valign="top"><b>Full screen.</b> Tap the artwork for a large player, with the source and a link to the original video.</td>
+    <td valign="top"><b>Queue.</b> Related songs line up after the one you asked for. Tap any of them to jump to it.</td>
+    <td valign="top"><b>Notebook tools in the Lens.</b> Results from Lens bridge tools open as their own tab, here a five-page weather briefing with a radar map, paged with the arrows or <b>Jump to…</b>. The music keeps playing in a mini player above the face.</td>
+  </tr>
+</table>
+
 **[avatar/README.md](avatar/README.md)** has the full install: the LAM and Audio2Expression conda envs, the version pins and build fixes they need, Blender export, the avatar maker, hosting, troubleshooting, and credits.
 
 ## Sparkboard
