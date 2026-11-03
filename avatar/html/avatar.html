@@ -341,18 +341,46 @@
     background:rgba(20,26,35,.82);border:1px solid var(--line);border-radius:10px;padding:10px}
   #meters.on{display:block}
 
-  #settings{position:fixed;z-index:10;top:0;right:0;bottom:0;width:min(400px,100vw);
-    background:var(--ink-2);border-left:1px solid var(--line);
-    padding:22px 22px calc(22px + env(safe-area-inset-bottom,0px));
-    overflow-y:auto;transform:translateX(100%);transition:transform .22s ease}
+  /* ---- Setup: a fixed title, sections as cards, Close and Save fixed at the bottom ---- */
+  #settings{position:fixed;z-index:10;top:0;right:0;bottom:0;width:min(420px,100vw);
+    display:flex;flex-direction:column;background:var(--ink-2);border-left:1px solid var(--line);
+    transform:translateX(100%);transition:transform .24s cubic-bezier(.2,.8,.2,1);touch-action:pan-y}
   #settings.open{transform:none}
+  #settings.dragging{transition:none}
+  #settings .sHead{flex:none;display:flex;align-items:baseline;gap:12px;
+    padding:calc(env(safe-area-inset-top,0px) + 18px) 20px 14px;border-bottom:1px solid var(--line)}
+  #settings h2{margin:0;flex:1;font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+  #settings .sHint{font-size:12px;color:var(--dim);display:none}
+  @media (hover:none) and (max-width:600px){ #settings .sHint{display:inline} }
+  #settings .sBody{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 12px 24px;-webkit-overflow-scrolling:touch}
+  #settings .sFoot{flex:none;display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));
+    border-top:1px solid var(--line);background:var(--ink-2)}
+  #settings .sFoot button{flex:1;padding:13px 10px;border-radius:12px;border:1px solid var(--line);background:var(--panel);
+    color:var(--text);font:inherit;font-size:15.5px;font-weight:600;cursor:pointer}
+  #settings .sFoot button.primary{background:#2f7d6b;border-color:#3c9a85;color:#fff}
+  /* each section: a card whose title anchors it; tap the title to open or close it */
+  #settings details.sec{background:#121821;border:1px solid var(--line);border-radius:16px;margin:0 0 12px;overflow:hidden}
+  #settings details.sec > summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:1fr auto;column-gap:12px;
+    align-items:center;padding:15px 16px;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+  #settings details.sec > summary::-webkit-details-marker{display:none}
+  #settings details.sec > summary::after{content:"";grid-column:2;grid-row:1 / span 2;width:9px;height:9px;margin-right:4px;
+    border-right:2px solid var(--dim);border-bottom:2px solid var(--dim);transform:rotate(45deg) translateY(-3px);transition:transform .18s}
+  #settings details.sec[open] > summary::after{transform:rotate(225deg) translateY(-3px)}
+  #settings details.sec[open] > summary{border-bottom:1px solid var(--line)}
+  #settings .sT{font-size:17px;font-weight:650;letter-spacing:-.01em;color:var(--text)}
+  #settings .sD{grid-column:1;font-size:12.5px;color:var(--dim);margin-top:2px}
+  #settings .sIn{padding:2px 16px 18px}
+  #settings h4{margin:22px 0 -2px;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--live)}
+  #settings .sIn > h4:first-child, #settings .sIn > p.note:first-child + h4{margin-top:14px}
+  #settings .sIn > p.note:first-child{margin-top:12px}
+  #settings label:not(.check){color:#aab4bf;font-weight:500}
+  #settings .row{margin-top:16px}
   #settings input[type=range]{width:100%;accent-color:var(--live)}
-  /* Moving a background slider: the panel clears so the change shows behind it. */
+  /* Moving a background slider: everything but that slider goes, so the change shows behind it. */
   #settings.peek{background:transparent;border-color:transparent}
-  #settings.peek > :not(.peekable), #settings.peek .peekable > :not(.slider){opacity:0}
-  #settings.peek .slider{opacity:1}
+  #settings.peek *{visibility:hidden}
+  #settings.peek .slider, #settings.peek .slider *{visibility:visible}
   #settings.peek .slider label{color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.9)}
-  #settings h2{margin:0 0 4px;font-size:17px;font-weight:600}
   #settings h3{margin:24px 0 2px;font-size:14px;font-weight:600}
   #settings p.note{margin:0 0 6px;color:var(--dim);font-size:13px;line-height:1.5}
   label{display:block;margin:12px 0 5px;font-size:13px;color:var(--dim)}
@@ -725,57 +753,22 @@
 </div></div>
 
 <aside id="settings" aria-label="Setup">
-  <h2>Setup</h2>
-  <p class="note">Addresses default to this page’s own host, so serving the page from your nginx needs no changes here.</p>
-
-  <h3>Model</h3>
-  <label for="llmBase">Model API</label>
-  <input type="text" id="llmBase">
-  <label for="llmModel">Model name</label>
-  <input type="text" id="llmModel">
-  <label for="thinking">Model thinking before it answers</label>
-  <select id="thinking">
-    <option value="off">Off — starts talking sooner</option>
-    <option value="on">On — slower, sometimes better on hard questions</option>
-  </select>
-  <label for="llmKey">API key</label>
-  <input type="password" id="llmKey" autocomplete="off">
-
-  <h3>Voice</h3>
-  <label for="ttsBase">Kokoro API</label>
-  <input type="text" id="ttsBase">
+  <header class="sHead"><h2>Setup</h2><span class="sHint">Swipe right to close</span></header>
+  <div class="sBody">
+  <details class="sec" id="secVoice" open>
+    <summary><span class="sT">Voice</span><span class="sD">How it sounds</span></summary>
+    <div class="sIn">
   <label for="ttsVoice">Voice</label>
   <input type="text" id="ttsVoice" list="voiceList" autocomplete="off">
   <datalist id="voiceList"></datalist>
   <label for="ttsSpeed">Speed</label>
   <input type="text" id="ttsSpeed">
-  <label for="speechOut">Speech playback</label>
-  <select id="speechOut">
-    <option value="auto">Automatic (audio player on phones)</option>
-    <option value="element">Audio player: smooth over wireless CarPlay and AirPlay</option>
-    <option value="webaudio">Web Audio: the mouth follows the sound most closely</option>
-  </select>
-  <label for="lipMode">Lip sync</label>
-  <select id="lipMode">
-    <option value="a2e">Lip-sync model on your server (best for a LAM face)</option>
-    <option value="timeline">Word timings from Kokoro</option>
-    <option value="audio">Audio analysis only</option>
-  </select>
-  <label for="a2eUrl">Lip-sync model address</label>
-  <input type="text" id="a2eUrl">
-
-  <h3>Listening</h3>
-  <label for="sttMode">Speech input</label>
-  <select id="sttMode">
-    <option value="server">Record and transcribe on your server</option>
-    <option value="browser">Browser speech recognition</option>
-  </select>
-  <label for="sttUrl">Transcription address</label>
-  <input type="text" id="sttUrl">
-  <label for="sttModel">Transcription model</label>
-  <input type="text" id="sttModel">
-  <label for="sttKey">Transcription key (leave blank unless your server needs one)</label>
-  <input type="password" id="sttKey" autocomplete="off">
+  <div class="row"><button id="testVoice">Test voice</button></div>
+    </div>
+  </details>
+  <details class="sec" id="secConv" open>
+    <summary><span class="sT">Conversation</span><span class="sD">Turn-taking, speakers and thinking</span></summary>
+    <div class="sIn">
   <label for="endSilence">Pause before it replies (seconds)</label>
   <input type="text" id="endSilence" inputmode="decimal">
   <p class="note">How long you can stop mid-thought before your turn ends. Raise it if you get cut off. Tapping the microphone ends your turn right away, and holding the space bar lets you talk for as long as you hold it.</p>
@@ -792,47 +785,59 @@
     <option value="2">Car (CarPlay, Android Auto, Bluetooth)</option>
   </select>
   <p class="note">Wireless speakers play sound a second or more after the page sends it. This is how long it waits after the last word before listening again, so the end of a reply isn’t cut off.</p>
-
-  <h3>Tools</h3>
-  <p class="note">Your Open WebUI tools, run through the Lens bridge. Results open in the Lens panel.</p>
-  <label for="lensOn">Tools</label>
-  <select id="lensOn"><option value="on">On</option><option value="off">Off</option></select>
-  <label for="lensUrl">Tools server address</label>
-  <input type="text" id="lensUrl">
-  <label for="lensKey">Tools server key</label>
-  <input type="password" id="lensKey" autocomplete="off">
-  <p class="note" id="lensStatus"></p>
-
-  <h3>Music</h3>
+  <label for="thinking">Model thinking before it answers</label>
+  <select id="thinking">
+    <option value="off">Off — starts talking sooner</option>
+    <option value="on">On — slower, sometimes better on hard questions</option>
+  </select>
+    </div>
+  </details>
+  <details class="sec" id="secFace" open>
+    <summary><span class="sT">Face</span><span class="sD">Avatar, camera background and tilt</span></summary>
+    <div class="sIn">
+  <label for="avatarUrl">Avatar — a .glb, or a LAM .zip (blank uses the built-in head)</label>
+  <input type="text" id="avatarUrl" placeholder="/avatar/avatar.glb">
+  <div class="peekable">
+  <h4>Background</h4>
+  <p class="note">Put a camera behind the face. On a phone, the rear camera turns the screen into a window with the avatar standing in front of the room. The picture stays on this device: it isn’t recorded or sent anywhere.</p>
+  <label for="camBg">Camera behind the face</label>
+  <select id="camBg"><option value="off">Off</option><option value="rear">Rear camera</option><option value="front">Front camera</option></select>
+  <div class="slider"><label for="camBlur">Background blur (more blur, more depth)</label>
+  <input type="range" id="camBlur" min="0" max="30" step="1"></div>
+  <div class="slider"><label for="camDim">Background darkness (helps the face stand out)</label>
+  <input type="range" id="camDim" min="0" max="80" step="5"></div>
+  </div>
+  <label for="tiltMode">3D tilt</label>
+  <select id="tiltMode">
+    <option value="on">Follow the phone’s motion (or the mouse)</option>
+    <option value="off">Off</option>
+  </select>
+  <label for="callNameInput">Name shown during a camera call</label>
+  <input type="text" id="callNameInput">
+    </div>
+  </details>
+  <details class="sec" id="secMusic" open>
+    <summary><span class="sT">Music</span><span class="sD">Songs, radio and podcasts</span></summary>
+    <div class="sIn">
   <p class="note">Ask for a song, an artist, a radio station or a podcast. Songs come from YouTube and keep going with related songs.</p>
   <label for="musicOn">Music</label>
   <select id="musicOn"><option value="on">On</option><option value="off">Off</option></select>
-  <label for="musicUrl">Music server address</label>
-  <input type="text" id="musicUrl">
   <label for="musicDownload">Download each song before playing it</label>
   <select id="musicDownload"><option value="auto">Automatic (on for phones)</option><option value="on">On: steady on mobile data, a short wait before each song</option><option value="off">Off: stream it, starts sooner</option></select>
   <label for="musicFx">Now playing effects</label>
   <select id="musicFx"><option value="auto">Automatic (lighter on phones)</option><option value="full">Full: moving colours, particles and sparks</option><option value="light">Light: particles and sparks, the artwork moves and glows</option><option value="off">Off</option></select>
-
-  <h3>Face</h3>
-  <label for="avatarUrl">Avatar — a .glb, or a LAM .zip (blank uses the built-in head)</label>
-  <input type="text" id="avatarUrl" placeholder="/avatar/avatar.glb">
-
-  <h3>New avatar from a photo</h3>
-  <p class="note">Your server turns one photo into a LAM face. Use a well-lit, front-facing photo with the whole head in frame. It takes about a minute, and the new face loads when it’s ready.</p>
-  <label for="makerPhoto">Photo</label>
-  <input type="file" id="makerPhoto" accept="image/*">
-  <label for="makerName">Name (letters, digits, - or _)</label>
-  <input type="text" id="makerName" maxlength="40" autocomplete="off" placeholder="alex">
-  <label class="check"><input type="checkbox" id="makerReplace"> Replace an avatar that already has this name</label>
-  <div class="row"><button id="makerGo">Make avatar</button></div>
-  <progress id="makerBar" max="5" value="0" hidden></progress>
-  <p class="note" id="makerStatus"></p>
-  <img id="makerPreview" alt="The face crop the new avatar was made from" hidden>
-  <label for="makerUrl">Avatar maker address</label>
-  <input type="text" id="makerUrl">
-
-  <h3>Your own voice</h3>
+    </div>
+  </details>
+  <details class="sec" id="secPersona">
+    <summary><span class="sT">Personality</span><span class="sD">The system prompt</span></summary>
+    <div class="sIn">
+  <label for="sysPrompt">System prompt</label>
+  <textarea id="sysPrompt"></textarea>
+    </div>
+  </details>
+  <details class="sec" id="secOwnVoice">
+    <summary><span class="sT">Your own voice</span><span class="sD">Teach it a voice from a recording</span></summary>
+    <div class="sIn">
   <p class="note">Kokoro can learn a voice from a short clip of one person talking. Record yourself here, or choose an audio or video file. Your server uses up to 30 seconds of it. A quiet room and your normal speaking voice work best. Music or other voices in the background will make it sound worse.</p>
   <p class="note" id="voiceScript">Read this out loud: “Hi, this is me, talking the way I usually do. Yesterday I went for a walk, grabbed a coffee and called an old friend. We laughed about the weather, made plans for the weekend, and I promised to bring the snacks. Honestly, it was a pretty good day.”</p>
   <div class="row"><button id="voiceRec">Record (20 s)</button></div>
@@ -844,16 +849,83 @@
   <progress id="voiceBar" max="20" value="0" hidden></progress>
   <progress id="voiceLvl" max="1" value="0" hidden></progress>
   <p class="note" id="voiceStatus"></p>
-  <div class="peekable">
-  <h3>Background</h3>
-  <p class="note">Put a camera behind the face. On a phone, the rear camera turns the screen into a window with the avatar standing in front of the room. The picture stays on this device: it isn’t recorded or sent anywhere.</p>
-  <label for="camBg">Camera behind the face</label>
-  <select id="camBg"><option value="off">Off</option><option value="rear">Rear camera</option><option value="front">Front camera</option></select>
-  <div class="slider"><label for="camBlur">Background blur (more blur, more depth)</label>
-  <input type="range" id="camBlur" min="0" max="30" step="1"></div>
-  <div class="slider"><label for="camDim">Background darkness (helps the face stand out)</label>
-  <input type="range" id="camDim" min="0" max="80" step="5"></div>
-  </div>
+    </div>
+  </details>
+  <details class="sec" id="secMaker">
+    <summary><span class="sT">New avatar from a photo</span><span class="sD">Make a LAM face on your server</span></summary>
+    <div class="sIn">
+  <p class="note">Your server turns one photo into a LAM face. Use a well-lit, front-facing photo with the whole head in frame. It takes about a minute, and the new face loads when it’s ready.</p>
+  <label for="makerPhoto">Photo</label>
+  <input type="file" id="makerPhoto" accept="image/*">
+  <label for="makerName">Name (letters, digits, - or _)</label>
+  <input type="text" id="makerName" maxlength="40" autocomplete="off" placeholder="alex">
+  <label class="check"><input type="checkbox" id="makerReplace"> Replace an avatar that already has this name</label>
+  <div class="row"><button id="makerGo">Make avatar</button></div>
+  <progress id="makerBar" max="5" value="0" hidden></progress>
+  <p class="note" id="makerStatus"></p>
+  <img id="makerPreview" alt="The face crop the new avatar was made from" hidden>
+    </div>
+  </details>
+  <details class="sec" id="secConn">
+    <summary><span class="sT">Connections</span><span class="sD">Server addresses and keys</span></summary>
+    <div class="sIn">
+  <p class="note">Addresses default to this page’s own host, so serving the page from your nginx needs no changes here.</p>
+  <h4>Model</h4>
+  <label for="llmBase">Model API</label>
+  <input type="text" id="llmBase">
+  <label for="llmModel">Model name</label>
+  <input type="text" id="llmModel">
+  <label for="llmKey">API key</label>
+  <input type="password" id="llmKey" autocomplete="off">
+  <h4>Speech</h4>
+  <label for="ttsBase">Kokoro API</label>
+  <input type="text" id="ttsBase">
+  <label for="speechOut">Speech playback</label>
+  <select id="speechOut">
+    <option value="auto">Automatic (audio player on phones)</option>
+    <option value="element">Audio player: smooth over wireless CarPlay and AirPlay</option>
+    <option value="webaudio">Web Audio: the mouth follows the sound most closely</option>
+  </select>
+  <label for="lipMode">Lip sync</label>
+  <select id="lipMode">
+    <option value="a2e">Lip-sync model on your server (best for a LAM face)</option>
+    <option value="timeline">Word timings from Kokoro</option>
+    <option value="audio">Audio analysis only</option>
+  </select>
+  <label for="a2eUrl">Lip-sync model address</label>
+  <input type="text" id="a2eUrl">
+  <h4>Listening</h4>
+  <label for="sttMode">Speech input</label>
+  <select id="sttMode">
+    <option value="server">Record and transcribe on your server</option>
+    <option value="browser">Browser speech recognition</option>
+  </select>
+  <label for="sttUrl">Transcription address</label>
+  <input type="text" id="sttUrl">
+  <label for="sttModel">Transcription model</label>
+  <input type="text" id="sttModel">
+  <label for="sttKey">Transcription key (leave blank unless your server needs one)</label>
+  <input type="password" id="sttKey" autocomplete="off">
+  <h4>Tools</h4>
+  <p class="note">Your Open WebUI tools, run through the Lens bridge. Results open in the Lens panel.</p>
+  <label for="lensOn">Tools</label>
+  <select id="lensOn"><option value="on">On</option><option value="off">Off</option></select>
+  <label for="lensUrl">Tools server address</label>
+  <input type="text" id="lensUrl">
+  <label for="lensKey">Tools server key</label>
+  <input type="password" id="lensKey" autocomplete="off">
+  <p class="note" id="lensStatus"></p>
+  <h4>Music</h4>
+  <label for="musicUrl">Music server address</label>
+  <input type="text" id="musicUrl">
+  <h4>Avatar maker</h4>
+  <label for="makerUrl">Avatar maker address</label>
+  <input type="text" id="makerUrl">
+    </div>
+  </details>
+  <details class="sec" id="secTuning">
+    <summary><span class="sT">Face tuning</span><span class="sD">Size, height and mouth of a LAM face</span></summary>
+    <div class="sIn">
   <label for="faceSize">Face size for a LAM face (1 fills the space above the captions)</label>
   <input type="text" id="faceSize" inputmode="decimal">
   <label for="faceRaise">Face height for a LAM face (0 = centred; positive raises it, negative lowers it — try ±0.1)</label>
@@ -864,23 +936,11 @@
   <input type="text" id="jawMax" inputmode="decimal">
   <label for="meterMode">Viseme meters</label>
   <select id="meterMode"><option value="off">Hidden</option><option value="on">Shown</option></select>
-  <label for="callNameInput">Name shown during a camera call</label>
-  <input type="text" id="callNameInput">
-  <label for="tiltMode">3D tilt</label>
-  <select id="tiltMode">
-    <option value="on">Follow the phone’s motion (or the mouse)</option>
-    <option value="off">Off</option>
-  </select>
-  <label for="sysPrompt">System prompt</label>
-  <textarea id="sysPrompt"></textarea>
-
-  <div class="row">
-    <button id="testVoice">Test voice</button>
-    <button id="saveCfg" class="primary">Save</button>
-  </div>
-  <div class="row"><button id="closeCfg">Close</button></div>
-
-  <h3>Settings for visitors</h3>
+    </div>
+  </details>
+  <details class="sec" id="secVisitors">
+    <summary><span class="sT">Settings for visitors</span><span class="sD">avatar-config.json for everyone else</span></summary>
+    <div class="sIn">
   <p class="note">Save your setup as <code>avatar-config.json</code> and put it next to this page on your server. Every visitor then starts with these settings. Anything a visitor changes in Setup stays in their own browser.</p>
   <label class="check"><input type="checkbox" id="exportKeys"> Include the API keys in the file</label>
   <p class="note warn" id="exportKeysNote">Anyone who opens the page can read keys in that file and use your model and tools directly. Leave this off and have nginx add the keys instead.</p>
@@ -891,7 +951,11 @@
   </div>
   <p class="note" id="siteCfgStatus"></p>
 
-  <h3>Troubleshooting</h3>
+    </div>
+  </details>
+  <details class="sec" id="secTrouble">
+    <summary><span class="sT">Troubleshooting</span><span class="sD">CarPlay and performance tests</span></summary>
+    <div class="sIn">
   <p class="note" id="debugLinks" hidden><a id="carplayTest" href="carplay-test.html" target="_blank" rel="noopener">CarPlay audio test</a>: a plain audio player with nothing else on the page. If it stutters over wireless CarPlay too, the problem is Safari and the phone’s link to the car, not this page.</p>
   <div class="row"><button id="carTestBtn">Start the guided CarPlay test</button></div>
   <p class="note">Plays one song through six setups in turn, 30 to 60 seconds each (the app blanked, without its frosted glass, with its audio engines closed, with the phone locked), and asks whether it was smooth. Open the app with <code>?cartest</code> on the address to start it straight away. Have a passenger tap, or tap only when it’s safe.</p>
@@ -903,6 +967,10 @@
   <label class="check"><input type="checkbox" class="perf" data-k="keep"> Silent keep-alive loop (keeps speech audible with the ring switch on silent)</label>
   <label class="check"><input type="checkbox" class="perf" data-k="session"> Audio mode set by the page (“playback”, and “record” while listening). Off leaves it to iOS, as a plain web page does</label>
   <div class="row"><button id="perfAllOff">Turn all off</button><button id="perfAllOn">Turn all on</button></div>
+    </div>
+  </details>
+  </div>
+  <footer class="sFoot"><button id="closeCfg">Close</button><button id="saveCfg" class="primary">Save</button></footer>
 </aside>
 
 <script type="module">
@@ -1039,6 +1107,49 @@ if (siteHide && !new URLSearchParams(location.search).has('setup')){
 }
 $('cfgBtn').onclick   = () => $('settings').classList.toggle('open');
 $('closeCfg').onclick = () => { $('settings').classList.remove('open'); backCam.apply(CFG); };   // drop an unsaved preview
+/* Setup closes with a swipe to the right (phones), or Escape. The panel follows
+   the finger; let go past a third of its width, or flick, and it closes. */
+(() => {
+  const el = $('settings'); let g = null;
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1 || e.target.closest('input[type=range],textarea')) { g = null; return; }
+    const t = e.touches[0]; g = { x:t.clientX, y:t.clientY, dir:'', dx:0, trail:[] };
+  }, { passive:true });
+  el.addEventListener('touchmove', e => {
+    if (!g) return;
+    const t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
+    if (!g.dir){
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      g.dir = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? 'x' : 'y';       // a sideways swipe; anything else scrolls
+      if (g.dir === 'x') el.classList.add('dragging');
+    }
+    if (g.dir !== 'x') return;
+    e.preventDefault();
+    g.dx = Math.max(0, dx); el.style.transform = `translateX(${g.dx}px)`;
+    const now = performance.now(); g.trail.push([now, g.dx]); while (g.trail.length > 2 && now - g.trail[0][0] > 100) g.trail.shift();
+  }, { passive:false });
+  const end = () => {
+    if (!g) return;
+    const drag = g; g = null;
+    if (drag.dir !== 'x') return;
+    const [t0, x0] = drag.trail[0] || [0, 0], ms = performance.now() - t0;   // speed over the last tenth of a second: a flick
+    const fast = ms > 0 && ms < 200 && (drag.dx - x0) / ms > 0.5;
+    el.classList.remove('dragging');
+    if (drag.dx > el.offsetWidth / 3 || (fast && drag.dx > 40)) $('closeCfg').click();   // slides on from where the finger left it
+    el.style.transform = '';
+  };
+  el.addEventListener('touchend', end); el.addEventListener('touchcancel', end);
+  addEventListener('keydown', e => { if (e.key === 'Escape' && el.classList.contains('open')) $('closeCfg').click(); });
+  // which sections were left open, on this device
+  const KEY = 'avatarSetupOpen';
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (Array.isArray(saved)) el.querySelectorAll('details.sec').forEach(d => { d.open = saved.includes(d.id); });
+  } catch {}
+  el.querySelectorAll('details.sec').forEach(d => d.addEventListener('toggle', () => {
+    try { localStorage.setItem(KEY, JSON.stringify([...el.querySelectorAll('details.sec[open]')].map(x => x.id))); } catch {}
+  }));
+})();
 $('meters').classList.toggle('on', CFG.meterMode === 'on');
 
 function showError(msg){
