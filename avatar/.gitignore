@@ -8,3 +8,5 @@ html/avatars/*
 html/avatar-config.json
 # Python bytecode from running the scripts in place
 __pycache__/
+# The real allowlist of Google accounts (see oauth2/allowed-emails.txt.example).
+oauth2/allowed-emails.txt

@@ -1,0 +1,3 @@
+# Google accounts allowed into the avatar, one email per line. Copy this file
+# to allowed-emails.txt (kept out of Git). Changes take effect without a restart.
+you@gmail.com

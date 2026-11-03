@@ -371,6 +371,37 @@ services:
     ports: ["127.0.0.1:8705:8705"]
     restart: unless-stopped
 
+  # "Sign in with Google" for the public avatar, instead of the nginx password
+  # (see avatar/nginx-google-signin.conf). nginx asks it about each request;
+  # only the Google accounts listed in avatar/oauth2/allowed-emails.txt get in,
+  # and that file is re-read when it changes. The LAN needs no sign-in.
+  avatar-signin:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.12.0
+    container_name: avatar-signin
+    command:
+      - --provider=google
+      - --http-address=0.0.0.0:4180
+      - --proxy-prefix=/avatar/oauth2
+      - --redirect-url=${AVATAR_PUBLIC_URL:-https://example.com/avatar}/oauth2/callback
+      - --authenticated-emails-file=/etc/oauth2/allowed-emails.txt
+      - --upstream=static://202
+      - --reverse-proxy=true
+      - --skip-provider-button=true
+      - --cookie-name=_avatar_auth
+      - --cookie-secure=true
+      - --cookie-samesite=lax
+      - --cookie-expire=720h          # stay signed in for 30 days of not using it
+      - --cookie-refresh=1h           # re-checks the Google account hourly while in use
+      - --request-logging=false       # nginx asks about every request; keep the log for sign-ins
+    environment:
+      OAUTH2_PROXY_CLIENT_ID: ${AVATAR_GOOGLE_CLIENT_ID:-}
+      OAUTH2_PROXY_CLIENT_SECRET: ${AVATAR_GOOGLE_CLIENT_SECRET:-}
+      OAUTH2_PROXY_COOKIE_SECRET: ${AVATAR_COOKIE_SECRET:-}
+    volumes:
+      - ./avatar/oauth2:/etc/oauth2:ro
+    ports: ["127.0.0.1:4180:4180"]
+    restart: unless-stopped
+
 volumes:
   openwebui-data:
   pgdata:

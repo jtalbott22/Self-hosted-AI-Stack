@@ -338,6 +338,17 @@ cp -r avatar/html/* /mnt/c/nginx/html/avatar/
 
 Because the page calls its services relatively, Windows nginx has to proxy them under the page's folder: `/avatar/llama/` → `127.0.0.1:8000/`, `/avatar/tts/` → `:8880/`, `/avatar/a2e/` → `:8701/`, `/avatar/stt/` → `:8090/`, `/avatar/lens/` → `:8095/`, and for the avatar maker `/avatar/make/` → `:8703/` with `client_max_body_size 16m`. Use the location blocks in `avatar/nginx-avatar.conf` as a template. Otherwise, set absolute addresses such as `http://localhost:8880/v1` in Setup; the services must then accept cross-origin requests.
 
+### Sign in with Google
+
+Instead of a password, the public page can ask for a Google sign-in and let in only the accounts you list. `avatar-signin` (oauth2-proxy, in `docker-compose.yaml`, on `127.0.0.1:4180`) does the sign-in; nginx asks it about every request. The LAN still walks straight in.
+
+1. In the Google Cloud console, create an OAuth client ID (APIs & Services → Credentials → Create credentials → OAuth client ID → Web application) with the authorized redirect URI `https://<your site>/avatar/oauth2/callback`. Publish the OAuth consent screen ("In production"); with only the basic email and profile scopes there's no Google review, and in "Testing" every sign-in lapses after 7 days.
+2. Put `AVATAR_GOOGLE_CLIENT_ID`, `AVATAR_GOOGLE_CLIENT_SECRET`, `AVATAR_COOKIE_SECRET` (32 random bytes, base64) and `AVATAR_PUBLIC_URL` (for example `https://example.com/avatar`) in `.env`.
+3. Copy `avatar/oauth2/allowed-emails.txt.example` to `allowed-emails.txt` and list the Google accounts, one per line. Edits take effect without a restart.
+4. `docker compose up -d avatar-signin`, then the nginx pieces in `avatar/nginx-google-signin.conf`, and reload nginx.
+
+A sign-in lasts 30 days from the last use, and is re-checked with Google hourly while in use. A home-screen copy of the page keeps its own cookies, so it asks once by itself. `/avatar/oauth2/sign_out` signs out; `docker logs -f avatar-signin` shows sign-ins and refused accounts. With no password left, authgate (below) has nothing to guard on that page.
+
 ### Brute-force protection (authgate)
 
 If the page is reachable from the internet behind a password (nginx `auth_basic`), `authgate` bans addresses that keep guessing, like fail2ban but without nginx reloads. It's in `docker-compose.yaml` and listens on `127.0.0.1:8705`.
