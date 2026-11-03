@@ -4769,7 +4769,8 @@ const home = (() => {
       return 'Home Assistant couldn’t do that: ' + (j.reply || j.error || 'status ' + r.status) +
         (j.devices && j.devices.length ? '\nDevices it knows: ' + j.devices.join('; ') + '\nIf one of these is clearly what the user meant, try again with its name; otherwise ask them.' : '');
     }
-    return (j.reply || 'Done.') + (j.done && j.done.length ? ' (' + j.done.join(', ') + ')' : '');
+    // For an action, which devices it acted on; a question's matches aren't the answer (they include ones that are off).
+    return (j.reply || 'Done.') + (j.kind === 'action_done' && j.done && j.done.length ? ' (' + j.done.join(', ') + ')' : '');
   }
   return { tools: () => ready ? TOOLS : [], handles: n => n === 'home_control', run, ready: () => ready };
 })();
