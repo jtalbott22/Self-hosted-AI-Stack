@@ -85,7 +85,12 @@ def describe(s, area=""):
         d["position"] = a.get("current_position")
     elif domain == "media_player":
         d["volume"] = round((a.get("volume_level") or 0) * 100) if a.get("volume_level") is not None else None
-        d["title"] = " - ".join(x for x in (a.get("media_artist"), a.get("media_title")) if x) or a.get("app_name") or ""
+        d["muted"] = a.get("is_volume_muted")
+        d["title"] = " - ".join(x for x in (a.get("media_artist"), a.get("media_title")) if x)
+        d["app"] = a.get("app_name") or ""
+        d["tv"] = a.get("device_class") == "tv"
+        f = a.get("supported_features") or 0
+        d["can"] = [n for bit, n in MEDIA_FEATURES if f & bit]
     elif domain == "climate":
         d["current"] = a.get("current_temperature")
         d["target"] = a.get("temperature")
@@ -93,6 +98,9 @@ def describe(s, area=""):
         d["step"] = a.get("target_temp_step") or 1
     return d
 
+
+MEDIA_FEATURES = ((1, "pause"), (4, "volume_set"), (8, "mute"), (16, "previous"), (32, "next"),
+                  (128, "on"), (256, "off"), (1024, "volume_step"), (16384, "play"))
 
 # What the panel may do: (domain, action) -> (service, how the value goes in)
 ACTIONS = {
@@ -105,6 +113,9 @@ ACTIONS = {
     ("cover", "position"): ("set_cover_position", lambda v: {"position": max(0, min(100, int(v)))}),
     ("media_player", "on"): ("turn_on", None), ("media_player", "off"): ("turn_off", None),
     ("media_player", "play_pause"): ("media_play_pause", None),
+    ("media_player", "next"): ("media_next_track", None), ("media_player", "previous"): ("media_previous_track", None),
+    ("media_player", "volume_up"): ("volume_up", None), ("media_player", "volume_down"): ("volume_down", None),
+    ("media_player", "mute"): ("volume_mute", lambda v: {"is_volume_muted": bool(v)}),
     ("media_player", "volume"): ("volume_set", lambda v: {"volume_level": max(0, min(100, int(v))) / 100}),
     ("scene", "activate"): ("turn_on", None), ("script", "run"): ("turn_on", None),
     ("climate", "target"): ("set_temperature", lambda v: {"temperature": float(v)}),

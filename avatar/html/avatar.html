@@ -165,7 +165,35 @@
   #homePane .hRow .hTile.wide{flex-basis:140px}
   #homePane .hRow .hTile:not(:has(.vs)){justify-content:center}
   #homePane .hRow .vs{flex:1;width:100%;height:auto;min-height:120px}
-  @media (min-width:700px){ #homePane .hRow .vs{max-height:340px} #homePane .hRow{align-items:flex-start} #homePane .hRow .hTile{height:100%} }
+  /* a TV or speaker: a card as tall as the sliders, with only the controls it supports */
+  #homePane .hRow .hTile.media{flex:0 0 176px;justify-content:stretch}
+  #homePane .mCard{flex:1;min-height:0;display:flex;flex-direction:column;gap:4px;padding:14px 12px 12px;border-radius:24px;
+    background:#1a212b;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);overflow:hidden}
+  #homePane .mCard.on{background:#212a36}
+  #homePane .mHead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  #homePane .mHead > svg{width:26px;height:26px;fill:none;stroke:var(--dim);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  #homePane .mCard.on .mHead > svg{stroke:var(--text)}
+  #homePane .mName{font-size:15px;font-weight:600;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  #homePane .mSub{font-size:12.5px;line-height:1.35;color:var(--dim);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+  #homePane .mGap{flex:1;min-height:6px}
+  #homePane .mBtn{flex:none;width:40px;height:40px;border-radius:50%;border:0;padding:0;background:transparent;display:grid;place-items:center;color:var(--text)}
+  #homePane .mBtn svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+  #homePane .mBtn svg.solid{fill:currentColor;stroke:none}
+  #homePane .mBtn:active{background:rgba(255,255,255,.08)}
+  #homePane .mBtn:disabled{opacity:.4}
+  #homePane .mPow{width:36px;height:36px;background:#2a3240}
+  #homePane .mPow svg{width:18px;height:18px}
+  #homePane .mPow.on{background:#e2e7ee;color:#10141b}
+  #homePane .mTrans{display:flex;justify-content:center;align-items:center;gap:6px;margin-bottom:10px}
+  #homePane .mPlay{width:58px;height:58px;background:#e2e7ee;color:#10141b}
+  #homePane .mPlay svg{width:24px;height:24px}
+  #homePane .mPlay:active{background:#fff}
+  #homePane .mVol{display:flex;justify-content:space-between;align-items:center;background:#2a3240;border-radius:14px;padding:3px}
+  #homePane .mVol .mBtn{width:44px;height:36px;border-radius:11px}
+  #homePane .mVol .mVal{flex:1;text-align:center;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+  #homePane .mBig{align-self:center;width:64px;height:64px;background:#2a3240}
+  #homePane .mBig svg{width:26px;height:26px}
+  @media (min-width:700px){ #homePane .hRow .vs{max-height:340px} #homePane .mCard{max-height:340px} #homePane .hRow{align-items:flex-start} #homePane .hRow .hTile{height:100%} }
   #homePane .hEmpty{color:var(--dim);font-size:14px;padding:18px 2px}
   #homePane .hGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:16px 12px;align-items:start}
   #homePane .hArea{grid-column:1 / -1;margin:10px 2px -6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
@@ -4845,6 +4873,45 @@ const home = (() => {
     media_player:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'
   };
   const icon = k => `<svg viewBox="0 0 24 24">${ICON[k] || ICON.light}</svg>`;
+  const MI = {
+    tv:'<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/>',
+    box:'<rect x="3" y="7" width="18" height="10" rx="2.5"/><path d="M10.5 10.5l3 1.5-3 1.5z"/>',
+    power:'<path d="M12 3v8"/><path d="M6.4 7.4a8 8 0 1 0 11.2 0"/>',
+    play:'<path class="s" d="M8 5.5v13l11-6.5z"/>', pause:'<rect class="s" x="6.5" y="5" width="4" height="14" rx="1"/><rect class="s" x="13.5" y="5" width="4" height="14" rx="1"/>',
+    prev:'<path class="s" d="M18 6v12l-8.5-6z"/><path d="M6 6v12"/>', next:'<path class="s" d="M6 6v12l8.5-6z"/><path d="M18 6v12"/>',
+    minus:'<path d="M6 12h12"/>', plus:'<path d="M12 6v12M6 12h12"/>',
+    speaker:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/>', muted:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/>'
+  };
+  // "solid" parts are filled shapes (play, pause, skip); the rest are lines
+  const mi = k => `<svg viewBox="0 0 24 24">${MI[k].replace(/ class="s"/g, ' fill="currentColor" stroke="none"')}</svg>`;
+  const shortName = n => n.replace(/\s*\([A-Z0-9-]{6,}\)\s*$/, '');   // "Samsung 8 Series (65) (UN65TU8000FXZA)": drop the model code
+  function mediaCard(d){
+    const on = isOn(d), gone = d.state === 'unavailable', can = new Set(d.can || []), playing = d.state === 'playing';
+    const state = gone ? 'Unavailable' : on ? d.state[0].toUpperCase() + d.state.slice(1) : 'Off';
+    const sub = [state, d.app, d.title].filter(Boolean).join(' · ');
+    const pow = on ? (can.has('off') ? `<button class="mBtn mPow on" data-a="off" aria-label="Turn off">${mi('power')}</button>` : '')
+                   : '';                                     // off: the big button in the middle turns it on
+    let body = '';
+    if (on && !gone){
+      const pp = can.has('pause') || can.has('play');
+      const trans = (can.has('previous') ? `<button class="mBtn" data-a="previous" aria-label="${d.tv ? 'Channel down' : 'Previous'}">${mi('prev')}</button>` : '') +
+        (pp ? `<button class="mBtn mPlay" data-a="play_pause" aria-label="${playing ? 'Pause' : 'Play'}">${mi(playing ? 'pause' : 'play')}</button>` : '') +
+        (can.has('next') ? `<button class="mBtn" data-a="next" aria-label="${d.tv ? 'Channel up' : 'Next'}">${mi('next')}</button>` : '');
+      // volume: steps by 5 when the level is known, otherwise the device's own up and down
+      const known = d.volume != null && can.has('volume_set'), step = can.has('volume_step') || known;
+      const vol = step ? `<div class="mVol">` +
+          `<button class="mBtn" ${known ? `data-a="volume" data-v="${Math.max(0, d.volume - 5)}"` : 'data-a="volume_down"'} aria-label="Volume down">${mi('minus')}</button>` +
+          (can.has('mute') ? `<button class="mBtn" data-a="mute" data-v="${d.muted ? 0 : 1}" aria-label="${d.muted ? 'Unmute' : 'Mute'}">${mi(d.muted ? 'muted' : 'speaker')}</button>`
+                           : `<span class="mVal">${known ? pct(d.volume) : 'Volume'}</span>`) +
+          `<button class="mBtn" ${known ? `data-a="volume" data-v="${Math.min(100, d.volume + 5)}"` : 'data-a="volume_up"'} aria-label="Volume up">${mi('plus')}</button></div>` : '';
+      body = `<div class="mGap"></div>${trans ? `<div class="mTrans">${trans}</div>` : ''}${vol}`;
+    } else if (!gone && can.has('on')){
+      body = `<div class="mGap"></div><button class="mBtn mBig" data-a="on" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>`;
+    } else body = '<div class="mGap"></div>';
+    return `<div class="hTile media" data-id="${esc(d.id)}"><div class="mCard${on ? ' on' : ''}">` +
+      `<div class="mHead">${mi(d.tv ? 'tv' : 'box')}${pow}</div><div class="mName">${esc(shortName(d.name))}</div>` +
+      `<div class="mSub">${esc(sub)}</div>${body}</div></div>`;
+  }
   const isOn = d => ['on', 'playing', 'paused', 'idle', 'open', 'opening'].includes(d.state);
   // The slider each kind of device gets, if any: what it sets and its level now (0-100).
   function slider(d){
@@ -4853,10 +4920,10 @@ const home = (() => {
     if (d.domain === 'switch') return { a:null, p: on ? 100 : 0 };
     if (d.domain === 'fan') return { a: d.percentage != null ? 'percentage' : null, p: on ? (d.percentage ?? 100) : 0 };
     if (d.domain === 'cover' && d.position != null) return { a:'position', p:d.position };
-    if (d.domain === 'media_player' && on && d.volume != null) return { a:'volume', p:d.volume, vol:true };
     return null;
   }
   function tile(d){
+    if (d.domain === 'media_player') return mediaCard(d);
     const on = isOn(d), gone = d.state === 'unavailable', sl = slider(d);
     let sub = gone ? 'Unavailable' : '', body = '', btns = '', wide = false;
     if (sl){
@@ -4869,12 +4936,6 @@ const home = (() => {
       case 'light': case 'fan':
         sub = sub || (on ? (sl.a ? pct(sl.p) : 'On') : 'Off'); break;
       case 'switch': sub = sub || (on ? 'On' : 'Off'); break;
-      case 'media_player':
-        sub = sub || [d.state[0].toUpperCase() + d.state.slice(1), d.title].filter(Boolean).join(' · ');
-        btns = (on ? `<button class="hBtn" data-a="play_pause" aria-label="${d.state === 'playing' ? 'Pause' : 'Play'}">${d.state === 'playing' ? '❚❚' : '▶'}</button>` : '') +
-               `<button class="hBtn" data-a="${on ? 'off' : 'on'}" aria-label="Power">⏻</button>`;
-        if (!sl) body = `<button class="hBig" data-a="${on ? 'play_pause' : 'on'}">${on ? (d.state === 'playing' ? 'Pause' : 'Play') : 'Turn on'}</button>`, btns = on ? '<button class="hBtn" data-a="off" aria-label="Power">⏻</button>' : '';
-        break;
       case 'cover':
         sub = sub || (d.position != null ? pct(d.position) + ' open' : d.state);
         btns = '<button class="hBtn" data-a="open" aria-label="Open">▲</button><button class="hBtn" data-a="stop" aria-label="Stop">■</button><button class="hBtn" data-a="close" aria-label="Close">▼</button>'; break;
