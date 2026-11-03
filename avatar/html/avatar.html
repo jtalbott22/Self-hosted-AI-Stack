@@ -152,8 +152,20 @@
   #chatList .del{flex:0 0 auto;min-width:44px;background:none;border:0;color:var(--dim);display:grid;place-items:center;padding:0 6px;border-radius:8px}
   #chatList .del svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
   /* ---- home controls: a live tab in the Lens, tiles like a phone's home app ---- */
-  #homePane{position:absolute;inset:0;overflow-y:auto;padding:4px 14px 16px;background:#0b0f14;color:var(--text);-webkit-overflow-scrolling:touch}
+  /* One room at a time, its sliders as tall as the panel; rooms are chips along the top. */
+  #homePane{position:absolute;inset:0;display:flex;flex-direction:column;gap:10px;padding:8px 0 12px;background:#0b0f14;color:var(--text);overflow:hidden}
   #homePane[hidden]{display:none}
+  #homePane .hRooms{flex:none;display:flex;gap:8px;overflow-x:auto;padding:0 14px;scrollbar-width:none}
+  #homePane .hRooms::-webkit-scrollbar{display:none}
+  #homePane .hRoom{flex:none;padding:7px 13px;border-radius:999px;border:1px solid var(--line);background:#161c25;font-size:13.5px;color:var(--dim);white-space:nowrap}
+  #homePane .hRoom.on{background:#e2e7ee;border-color:#e2e7ee;color:#10141b}
+  #homePane .hRow{flex:1;min-height:0;display:flex;gap:12px;overflow-x:auto;overflow-y:hidden;padding:0 14px;scroll-snap-type:x proximity;scrollbar-width:none}
+  #homePane .hRow::-webkit-scrollbar{display:none}
+  #homePane .hRow .hTile{flex:0 0 88px;scroll-snap-align:start;justify-content:flex-end}
+  #homePane .hRow .hTile.wide{flex-basis:140px}
+  #homePane .hRow .hTile:not(:has(.vs)){justify-content:center}
+  #homePane .hRow .vs{flex:1;width:100%;height:auto;min-height:120px}
+  @media (min-width:700px){ #homePane .hRow .vs{max-height:340px} #homePane .hRow{align-items:flex-start} #homePane .hRow .hTile{height:100%} }
   #homePane .hEmpty{color:var(--dim);font-size:14px;padding:18px 2px}
   #homePane .hGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:16px 12px;align-items:start}
   #homePane .hArea{grid-column:1 / -1;margin:10px 2px -6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
@@ -4819,7 +4831,7 @@ const home = (() => {
     if (visible) pollT = setTimeout(poll, 4000);             // a wall switch or another app shows up here too
   }
   async function show(title, w, focus = true){
-    what = { ids:w.ids || [], q:w.q || '' };
+    what = { ids:w.ids || [], q:w.q || '' }; room = null;
     try { await load(); } catch (e){ devs = []; paneEl.innerHTML = '<p class="hEmpty">Couldn’t reach Home Assistant (' + esc(e.message) + ').</p>'; }
     lens.pane('home', '⌂ ' + title, pane, focus);
     return devs;
@@ -4878,15 +4890,26 @@ const home = (() => {
     return `<div class="hTile${wide ? ' wide' : ''}" data-id="${esc(d.id)}">${body}<span class="tName">${esc(d.name)}</span>` +
       (sub ? `<span class="tSub">${esc(sub)}</span>` : '') + (btns ? `<div class="tBtns">${btns}</div>` : '') + '</div>';
   }
-  let dragging = null;
+  let dragging = null, room = null;
   function render(){
     if (dragging) return;                                   // never redraw under a finger
-    if (!devs.length){ paneEl.innerHTML = '<p class="hEmpty">No matching devices.</p>'; return; }
-    const groups = what.ids && what.ids.length ? [['', devs]] : [...devs.reduce((m, d) => m.set(d.area, [...(m.get(d.area) || []), d]), new Map())];
-    const keep = paneEl.scrollTop;
-    paneEl.innerHTML = '<div class="hGrid">' + groups.map(([area, ds]) =>
-      (groups.length > 1 ? `<div class="hArea">${esc(area || 'Other')}</div>` : '') + ds.map(tile).join('')).join('') + '</div>';
-    paneEl.scrollTop = keep;
+    if (!devs.length){ paneEl.innerHTML = '<p class="hEmpty" style="padding:18px 16px">No matching devices.</p>'; return; }
+    const groups = what.ids && what.ids.length ? [['', devs]] : [...devs.reduce((m, d) => m.set(d.area, [...(m.get(d.area) || []), d]), new Map())]
+      .sort(([a], [b]) => !a - !b || a.localeCompare(b));      // rooms by name; devices with no room last
+    if (!groups.some(([a]) => a === room)) room = groups[0][0];
+    const ds = groups.find(([a]) => a === room)[1];
+    const keep = paneEl.querySelector('.hRow')?.scrollLeft || 0, keepRooms = paneEl.querySelector('.hRooms')?.scrollLeft || 0;
+    paneEl.innerHTML = (groups.length > 1 ? '<div class="hRooms" role="tablist">' + groups.map(([a]) =>
+        `<button class="hRoom${a === room ? ' on' : ''}" role="tab" aria-selected="${a === room}" data-room="${esc(a)}">${esc(a || 'Other')}</button>`).join('') + '</div>' : '') +
+      '<div class="hRow">' + ds.map(tile).join('') + '</div>';
+    const row = paneEl.querySelector('.hRow'); if (row) row.scrollLeft = keep;
+    const bar = paneEl.querySelector('.hRooms'), chip = bar?.querySelector('.on');
+    if (bar){                                               // keep the chosen room's chip in view, scrolling only the chip row
+      bar.scrollLeft = keepRooms;
+      const l = chip.offsetLeft - bar.offsetLeft, r = l + chip.offsetWidth;
+      if (l < bar.scrollLeft + 14) bar.scrollLeft = l - 14;
+      else if (r > bar.scrollLeft + bar.clientWidth - 14) bar.scrollLeft = r - bar.clientWidth + 14;
+    }
   }
   async function set(id, action, value, quick){
     if (!quick) touchedAt = performance.now();
@@ -4966,6 +4989,8 @@ const home = (() => {
     else if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); set(id, d.domain === 'media_player' ? 'play_pause' : isOn(d) ? 'off' : 'on'); }
   });
   paneEl.addEventListener('click', e => {
+    const rb = e.target.closest('.hRoom');
+    if (rb){ room = rb.dataset.room; const r = paneEl.querySelector('.hRow'); if (r) r.scrollLeft = 0; render(); return; }
     const b = e.target.closest('button[data-a]'); if (!b) return;
     set(b.closest('.hTile').dataset.id, b.dataset.a, b.dataset.v != null ? +b.dataset.v : undefined);
   });
