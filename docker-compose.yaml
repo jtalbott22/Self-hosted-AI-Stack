@@ -421,6 +421,38 @@ services:
     ports: ["127.0.0.1:8706:8706"]
     restart: unless-stopped
 
+  # Home Assistant: controls the lights, plugs, thermostat, TVs and so on.
+  # Host networking so it can find devices on the LAN (Hue bridge, TVs,
+  # Wi-Fi plugs announce themselves by multicast; WSL must use mirrored
+  # networking). Its own page and login: http://<this machine>:8123.
+  # The avatar talks to it through avatar-home, never directly.
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.10.4
+    container_name: homeassistant
+    network_mode: host
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./homeassistant:/config
+      - /run/dbus:/run/dbus:ro
+    restart: unless-stopped
+
+  # Lets the avatar control the house through Home Assistant (avatar/home).
+  # Holds the Home Assistant token; only OWNERS (and the LAN) may use it.
+  avatar-home:
+    image: python:3.12-slim
+    container_name: avatar-home
+    command: ["python", "-u", "/app/home.py"]
+    environment:
+      HA_URL: http://host.docker.internal:8123
+      HA_TOKEN: ${HA_TOKEN:-}
+      OWNERS: ${AVATAR_HOME_OWNERS:-}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ./avatar/home:/app:ro
+    ports: ["127.0.0.1:8707:8707"]
+    restart: unless-stopped
+
 volumes:
   openwebui-data:
   pgdata:

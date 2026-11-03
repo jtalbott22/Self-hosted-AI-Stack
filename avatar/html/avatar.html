@@ -2763,6 +2763,7 @@ function settle(){
 
 const TOOL_PROMPT = ' You can use tools. When a tool result is shown on screen, it is already in front of the user in the Lens panel: never read its contents, numbers, or tables aloud — say one short sentence about what is showing. Before anything slow or with side effects, such as running a notebook, ask out loud and wait for a yes. You can hide or reopen the panel with hide_panel and show_panel.';
 
+const HOME_PROMPT = ' You can control the user\u2019s home (lights, plugs, thermostat, TVs and so on) with home_control. Use it whenever they ask for something in the house, then confirm in a few words, such as "Kitchen lights are off."';
 const MUSIC_PROMPT = ' You can play songs, artists, genres, live radio stations and podcasts with play_music, and pause, resume, skip or stop them with music_control. When you start something, say only a few words, such as "Here\u2019s Bohemian Rhapsody." It starts as soon as you stop talking. Music pauses while the user talks to you and picks back up afterwards, so never stop it just because they spoke.';
 
 /* Keep the context short, and never start it in the middle of a tool exchange. */
@@ -2776,7 +2777,7 @@ function recentHistory(){
 async function streamTurn(gen, onText){
   const list = tools.list();
   const body = { model:CFG.llmModel, stream:true,
-    messages:[{ role:'system', content:CFG.sysPrompt + (tools.lensReady() ? TOOL_PROMPT : '') + (music.enabled() ? MUSIC_PROMPT : '') }, ...recentHistory()] };
+    messages:[{ role:'system', content:CFG.sysPrompt + (tools.lensReady() ? TOOL_PROMPT : '') + (music.enabled() ? MUSIC_PROMPT : '') + (home.ready() ? HOME_PROMPT : '') }, ...recentHistory()] };
   if (list.length){ body.tools = list; body.tool_choice = 'auto'; }
   if (CFG.thinking === 'off') body.chat_template_kwargs = { enable_thinking:false };
   const res = await fetch(CFG.llmBase.replace(/\/$/, '') + '/chat/completions', {
@@ -4735,6 +4736,45 @@ const music = (() => {
 })();
 
 /* ================================================================== *
+ * Home — the house, through Home Assistant (avatar/home, at home/). The
+ * model passes a plain-English command; Home Assistant's own assistant
+ * works out the devices. Offered only when the server says this person
+ * may use it (the owner, or the LAN) and Home Assistant is connected.
+ * ================================================================== */
+const home = (() => {
+  let ready = false;
+  const api = p => new URL('home/' + p, location.href).href;
+  async function check(){
+    try {
+      const r = await fetch(api('ok'), { cache:'no-store' });
+      const j = await r.json().catch(() => ({}));
+      ready = r.ok && !!j.ready;
+    } catch { ready = false; }
+  }
+  check();
+  setInterval(check, 5 * 60 * 1000);                    // picks it up once Home Assistant is set up
+  const TOOLS = [
+    { type:'function', function:{ name:'home_control',
+      description:'Control or ask about the user’s home through Home Assistant: lights, plugs and switches, the thermostat, fans, blinds, locks, TVs and speakers, scenes. Give one short plain-English command or question, such as "turn off the kitchen lights", "dim the living room to 30%", "set the thermostat to 70", "turn on movie night", "is the front door locked?" or "which lights are on?".',
+      parameters:{ type:'object', properties:{
+        command:{ type:'string', description:'One command or question, in plain English, using the room or device names the user said.' } },
+        required:['command'] } } }
+  ];
+  async function run(name, args){
+    const r = await fetch(api('command'), { method:'POST', headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({ text:String(args.command || '') }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false){
+      if (r.status === 403){ ready = false; return 'Home control isn’t available to this user.'; }
+      return 'Home Assistant couldn’t do that: ' + (j.reply || j.error || 'status ' + r.status) +
+        (j.devices && j.devices.length ? '\nDevices it knows: ' + j.devices.join('; ') + '\nIf one of these is clearly what the user meant, try again with its name; otherwise ask them.' : '');
+    }
+    return (j.reply || 'Done.') + (j.done && j.done.length ? ' (' + j.done.join(', ') + ')' : '');
+  }
+  return { tools: () => ready ? TOOLS : [], handles: n => n === 'home_control', run, ready: () => ready };
+})();
+
+/* ================================================================== *
  * Tools — fetched from the Lens bridge, which runs your Open WebUI tool
  * files and hands back their HTML. The model only decides which tool
  * to call; the panel shows the result untouched.
@@ -4762,11 +4802,12 @@ const tools = (() => {
     }
   }
   const lensReady = () => CFG.lensOn !== 'off' && specs.length > 0;
-  function list(){ return [...(lensReady() ? [...specs, ...LOCAL] : []), ...music.tools()]; }
+  function list(){ return [...(lensReady() ? [...specs, ...LOCAL] : []), ...music.tools(), ...home.tools()]; }
   async function run(tc){
     const name = tc.function.name;
     let args = {}; try { args = JSON.parse(tc.function.arguments || '{}'); } catch {}
     if (music.handles(name)) return music.run(name, args);
+    if (home.handles(name)) return home.run(name, args);
     if (name === 'hide_panel'){ lens.close(); return 'The panel is hidden.'; }
     if (name === 'show_panel'){ lens.open(); return 'The panel is showing.'; }
     const r = await fetch(url('/call'), { method:'POST',

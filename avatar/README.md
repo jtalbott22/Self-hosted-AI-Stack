@@ -355,6 +355,17 @@ The chat bubble next to the mute button (top left) opens **Chats**: every conver
 
 `avatar-chats` (`avatar/chats/chats.py`, in `docker-compose.yaml`, on `127.0.0.1:8706`) keeps them as JSON files in the `chats-data` volume, separately for each Google account: nginx passes the signed-in email (from `avatar-signin`, with `--set-xauthrequest`) in `X-Avatar-User`, and always sets or clears that header so a browser can't pick someone else's. The LAN needs no sign-in, so chats from there are kept under `AVATAR_LAN_USER` (set it to your own Google account to see the same chats at home and away). The nginx pieces are in `avatar/nginx-google-signin.conf`; the avatar container's config already has `chats/`.
 
+### Home control (Home Assistant)
+
+The avatar can run the house: "turn off the kitchen lights", "set the thermostat to 70", "is the front door locked?". `homeassistant` (in `docker-compose.yaml`, host networking, its own page at `http://<this machine>:8123`) talks to the devices; `avatar-home` (`avatar/home/home.py`, `127.0.0.1:8707`) passes the avatar's commands to Home Assistant's built-in assistant, Assist, which works out which devices are meant. The model gets a `home_control` tool once Home Assistant is connected.
+
+1. Open `http://<this machine>:8123` and create the Home Assistant account. On WSL, networking must be mirrored for Home Assistant to find devices, and the WSL firewall must let the LAN reach port 8123 (`New-NetFirewallHyperVRule`, as for Open WebUI).
+2. Add your devices under Settings → Devices & services (many are found on their own: Hue, TVs, speakers).
+3. Settings → Voice assistants → Expose: tick what the avatar may control. Leave out anything you'd never want done by voice from afar, such as unlocking doors.
+4. Your profile → Security → Long-lived access tokens: create one, put it in `.env` as `HA_TOKEN`, and `docker compose up -d avatar-home`.
+
+Only the people in `AVATAR_HOME_OWNERS` (comma-separated Google accounts) and the LAN can use it; nginx passes the signed-in account in `X-Avatar-User` (see Saved chats), and everyone else is refused. The token stays in `avatar-home`, never in the page. For the public nginx, add `location /avatar/home/` like `/avatar/chats/` (see `avatar/nginx-google-signin.conf`), proxying to `127.0.0.1:8707/`.
+
 ### Brute-force protection (authgate)
 
 If the page is reachable from the internet behind a password (nginx `auth_basic`), `authgate` bans addresses that keep guessing, like fail2ban but without nginx reloads. It's in `docker-compose.yaml` and listens on `127.0.0.1:8705`.
