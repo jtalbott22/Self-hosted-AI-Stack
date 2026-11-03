@@ -393,6 +393,7 @@ services:
       - --cookie-expire=720h          # stay signed in for 30 days of not using it
       - --cookie-refresh=1h           # re-checks the Google account hourly while in use
       - --request-logging=false       # nginx asks about every request; keep the log for sign-ins
+      - --set-xauthrequest=true       # tells nginx who signed in (for saved chats)
     environment:
       OAUTH2_PROXY_CLIENT_ID: ${AVATAR_GOOGLE_CLIENT_ID:-}
       OAUTH2_PROXY_CLIENT_SECRET: ${AVATAR_GOOGLE_CLIENT_SECRET:-}
@@ -400,6 +401,21 @@ services:
     volumes:
       - ./avatar/oauth2:/etc/oauth2:ro
     ports: ["127.0.0.1:4180:4180"]
+    restart: unless-stopped
+
+  # The avatar's saved chats, separately for each person (avatar/chats).
+  # nginx tells it who's asking: the Google account from avatar-signin, or
+  # LAN_USER for the LAN, which needs no sign-in.
+  avatar-chats:
+    image: python:3.12-slim
+    container_name: avatar-chats
+    command: ["python", "-u", "/app/chats.py"]
+    environment:
+      LAN_USER: ${AVATAR_LAN_USER:-lan}
+    volumes:
+      - ./avatar/chats:/app:ro
+      - chats-data:/data
+    ports: ["127.0.0.1:8706:8706"]
     restart: unless-stopped
 
 volumes:
@@ -410,3 +426,4 @@ volumes:
   music-cache:
   kokoro-voices:
   authgate-data:
+  chats-data:

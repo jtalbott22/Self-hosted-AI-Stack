@@ -349,6 +349,12 @@ Instead of a password, the public page can ask for a Google sign-in and let in o
 
 A sign-in lasts 30 days from the last use, and is re-checked with Google hourly while in use. A home-screen copy of the page keeps its own cookies, so it asks once by itself. `/avatar/oauth2/sign_out` signs out; `docker logs -f avatar-signin` shows sign-ins and refused accounts. With no password left, authgate (below) has nothing to guard on that page.
 
+### Saved chats
+
+The chat bubble next to the mute button (top left) opens **Chats**: every conversation is saved on your server after each exchange, and you can open one to carry on where you left off (the model remembers it too), start a new chat, delete one (tap the bin, then Delete), or delete them all. "Save my chats" turns saving off for that browser. The page starts a new chat each time it opens.
+
+`avatar-chats` (`avatar/chats/chats.py`, in `docker-compose.yaml`, on `127.0.0.1:8706`) keeps them as JSON files in the `chats-data` volume, separately for each Google account: nginx passes the signed-in email (from `avatar-signin`, with `--set-xauthrequest`) in `X-Avatar-User`, and always sets or clears that header so a browser can't pick someone else's. The LAN needs no sign-in, so chats from there are kept under `AVATAR_LAN_USER` (set it to your own Google account to see the same chats at home and away). The nginx pieces are in `avatar/nginx-google-signin.conf`; the avatar container's config already has `chats/`.
+
 ### Brute-force protection (authgate)
 
 If the page is reachable from the internet behind a password (nginx `auth_basic`), `authgate` bans addresses that keep guessing, like fail2ban but without nginx reloads. It's in `docker-compose.yaml` and listens on `127.0.0.1:8705`.

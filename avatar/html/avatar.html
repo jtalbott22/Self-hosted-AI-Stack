@@ -124,6 +124,34 @@
   #muteBtn.muted{background:#e2e7ee;border-color:#e2e7ee;color:#10141b}
   #muteBtn.muted .on{display:none} #muteBtn.muted .off{display:inline}
   #muteBtn:focus-visible{outline:2px solid var(--live);outline-offset:3px}
+  #chatsBtn{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;cursor:pointer;padding:0;
+    background:rgba(20,26,35,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid rgba(255,255,255,.06);color:var(--dim);-webkit-tap-highlight-color:transparent}
+  #chatsBtn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+  #chatsBtn:focus-visible{outline:2px solid var(--live);outline-offset:3px}
+
+  /* ---- saved chats: a panel from the left ---- */
+  #chatsPanel{position:fixed;z-index:10;top:0;left:0;bottom:0;width:min(400px,100vw);
+    background:var(--ink-2);border-right:1px solid var(--line);
+    padding:calc(env(safe-area-inset-top,0px) + 22px) 22px calc(22px + env(safe-area-inset-bottom,0px));
+    overflow-y:auto;transform:translateX(-100%);transition:transform .22s ease}
+  #chatsPanel.open{transform:none}
+  #chatsPanel .chHead{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  #chatsPanel h2{margin:0;font-size:17px;font-weight:600}
+  #chatsPanel p.note{margin:6px 0;color:var(--dim);font-size:13px;line-height:1.5}
+  #chatsPanel p.note.bad{color:#e8b84b}
+  #chatsPanel button{font:inherit;color:var(--text);cursor:pointer}
+  #chatNew{padding:8px 14px;border-radius:8px;border:1px solid #31545a;background:#20303a;font-size:14px}
+  #chatList{list-style:none;margin:10px 0 0;padding:0}
+  #chatList li{display:flex;align-items:stretch;gap:6px;border-top:1px solid var(--line)}
+  #chatList li.none{color:var(--dim);font-size:14px;padding:14px 2px;border:0}
+  #chatList .open{flex:1;min-width:0;text-align:left;background:none;border:0;padding:11px 4px;display:flex;flex-direction:column;gap:3px}
+  #chatList .open b{font-weight:500;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #chatList .open span{font-size:12.5px;color:var(--dim)}
+  #chatList li.cur .open b::before{content:"\25CF  ";color:var(--live);font-size:10px;vertical-align:2px}
+  #chatList .del{flex:0 0 auto;min-width:44px;background:none;border:0;color:var(--dim);display:grid;place-items:center;padding:0 6px;border-radius:8px}
+  #chatList .del svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  #chatList .del.armed,#chatDelAll.armed{background:#5a2323!important;border-color:#8a3a3a!important;color:#fff!important;font-size:13px}
 
   :root{ --barH: calc(98px + env(safe-area-inset-bottom,0px)); --lensH: 52dvh; }
 
@@ -535,7 +563,19 @@
     <svg class="on" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
     <svg class="off" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
   </button>
+  <button id="chatsBtn" type="button" aria-label="Saved chats" title="Saved chats">
+    <svg viewBox="0 0 24 24"><path d="M20 12.5a7.5 7.5 0 0 1-11 6.6L4 20.5l1.4-4.4A7.5 7.5 0 1 1 20 12.5z"/><path d="M8.5 11h7M8.5 14h4.5"/></svg>
+  </button>
 </div>
+
+<aside id="chatsPanel" aria-label="Saved chats">
+  <div class="chHead"><h2>Chats</h2><button id="chatNew" type="button">New chat</button></div>
+  <p class="note" id="chatWho"></p>
+  <label class="check"><input type="checkbox" id="chatKeep"> Save my chats</label>
+  <p class="note" id="chatStatus"></p>
+  <ul id="chatList"></ul>
+  <div class="row"><button id="chatDelAll" type="button">Delete all chats</button><button id="chatClose" type="button">Close</button></div>
+</aside>
 
 <div id="music" role="region" aria-label="Now playing">
   <div class="mrow">
@@ -2830,10 +2870,149 @@ async function ask(text, via){
     showError('Model request failed: ' + e.message);
   } finally {
     streaming = false; settle();
+    chats.saveSoon();
     // what was heard, what the model called, how it began: why a request didn't do what was asked
     music.note('turn', { via, heard:String(text).slice(0, 100), tools:used.join(',') || 'none', reply:shown.trim().slice(0, 80) });
   }
 }
+
+/* ================================================================== *
+ * Saved chats: kept on your server, separately for each Google account
+ * (avatar/chats, through nginx at chats/). A chat is saved after every
+ * exchange; Chats lists them, opens one to carry on, and deletes them.
+ * The page starts a new chat each time it opens.
+ * ================================================================== */
+const chats = (() => {
+  const api = p => new URL('chats/' + p, location.href).href;
+  const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)).replace(/-/g, '');
+  const panel = $('chatsPanel'), listEl = $('chatList');
+  const TRASH = '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+  let id = newId(), saveT = 0, list = [], armed = null, armT = 0, allArmed = false;
+  let keep = true;
+  try { keep = localStorage.getItem('avatarKeepChats') !== '0'; } catch {}
+  $('chatKeep').checked = keep;
+  $('chatKeep').onchange = () => {
+    keep = $('chatKeep').checked;
+    try { localStorage.setItem('avatarKeepChats', keep ? '1' : '0'); } catch {}
+    if (keep) saveSoon();
+    say(keep ? '' : 'New exchanges aren’t saved. Chats saved before stay until you delete them.');
+  };
+  const say = (t, bad) => { $('chatStatus').textContent = t || ''; $('chatStatus').classList.toggle('bad', !!bad); };
+  const title = () => String(chat.find(c => c.user)?.user || history.find(m => m.role === 'user')?.content || 'Chat').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const when = ts => {
+    const d = new Date(ts * 1000), now = new Date();
+    return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' })
+      : d.toLocaleDateString([], { month:'short', day:'numeric', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
+  };
+  async function call(path, opts){
+    const r = await fetch(api(path), { cache:'no-store', ...opts });
+    if (!r.ok) throw new Error('status ' + r.status);
+    return r.json();
+  }
+
+  // The model's messages (to carry on where it left off), and the exchanges as shown, with their chips.
+  async function save(){
+    clearTimeout(saveT);
+    if (!keep || !history.some(m => m.role === 'user')) return;
+    try {
+      await call(id, { method:'PUT', headers:{ 'Content-Type':'application/json' },
+        body:JSON.stringify({ title:title(), messages:history, turns:chat.map(c => ({ user:c.user, reply:c.reply, res:c.res })) }) });
+      if (panel.classList.contains('open')) refresh();
+    } catch (e){
+      say('Couldn’t save this chat (' + (e.message || e) + '). It’s tried again after the next exchange.', true);
+    }
+  }
+  function saveSoon(){ clearTimeout(saveT); saveT = setTimeout(save, 800); }
+
+  // Clears the conversation: the screen, and what the model remembers.
+  function clear(){
+    stopSpeaking();
+    history.length = 0; chat.length = 0;
+    notice = ''; capInterim = ''; lastCap = { user:'', reply:'' };
+    renderChat(); settle();
+  }
+  const busy = () => state === 'listening' || state === 'transcribing';
+
+  async function fresh(){
+    if (busy()) return say('Finish talking first.', true);
+    await save();
+    clear(); id = newId();
+    close();
+  }
+  async function open(cid){
+    if (busy()) return say('Finish talking first.', true);
+    try {
+      say('Opening…');
+      const c = await call(cid);
+      if (id !== cid) await save();
+      clear();
+      history.push(...(Array.isArray(c.messages) ? c.messages : []));
+      chat.push(...(c.turns || []).map(t => ({ user:t.user || '', reply:t.reply || '', res:Array.isArray(t.res) ? t.res : [] })));
+      id = c.id; renderChat(); say('');
+      close();
+    } catch (e){ say('Couldn’t open that chat (' + (e.message || e) + ').', true); }
+  }
+  async function remove(cid){
+    try {
+      await call(cid, { method:'DELETE' });
+      if (cid === id){ clear(); id = newId(); }
+      await refresh();
+    } catch (e){ say('Couldn’t delete it (' + (e.message || e) + ').', true); }
+  }
+  async function removeAll(){
+    try {
+      const r = await call('', { method:'DELETE' });
+      clearTimeout(saveT); clear(); id = newId();
+      say('Deleted ' + r.deleted + (r.deleted === 1 ? ' chat.' : ' chats.'));
+      await refresh();
+    } catch (e){ say('Couldn’t delete them (' + (e.message || e) + ').', true); }
+  }
+
+  function render(){
+    listEl.innerHTML = list.length ? list.map(c =>
+      `<li data-id="${esc(c.id)}"${c.id === id ? ' class="cur"' : ''}><button class="open" type="button"><b>${esc(c.title || 'Chat')}</b>` +
+      `<span>${when(c.updated)} · ${c.turns} ${c.turns === 1 ? 'exchange' : 'exchanges'}</span></button>` +
+      `<button class="del${armed === c.id ? ' armed' : ''}" type="button" aria-label="Delete this chat">${armed === c.id ? 'Delete' : TRASH}</button></li>`).join('')
+      : '<li class="none">No saved chats yet.</li>';
+    const b = $('chatDelAll');
+    b.hidden = !list.length;
+    b.classList.toggle('armed', allArmed);
+    b.textContent = allArmed ? 'Tap again to delete all ' + list.length : 'Delete all chats';
+  }
+  async function refresh(){
+    try { list = await call(''); render(); }
+    catch (e){ say('Couldn’t load your chats (' + (e.message || e) + '). Reload the page if you were signed out.', true); }
+  }
+  async function who(){
+    try {
+      const m = await call('me');
+      $('chatWho').textContent = m.lan
+        ? 'Saved on your server. On your home network nobody signs in, so chats here are kept as ' + m.user + '’s.'
+        : 'Saved on your server for ' + m.user + '. Only you can see them.';
+    } catch { $('chatWho').textContent = ''; }
+  }
+  function disarm(){ armed = null; allArmed = false; clearTimeout(armT); render(); }
+  const arm = () => { clearTimeout(armT); armT = setTimeout(disarm, 4000); render(); };
+
+  listEl.addEventListener('click', e => {
+    const li = e.target.closest('li[data-id]'); if (!li) return;
+    const cid = li.dataset.id;
+    if (e.target.closest('.del')){
+      if (armed === cid){ disarm(); remove(cid); } else { armed = cid; allArmed = false; arm(); }
+    } else if (e.target.closest('.open')) open(cid);
+  });
+  $('chatDelAll').onclick = () => { if (allArmed){ disarm(); removeAll(); } else { allArmed = true; armed = null; arm(); } };
+  $('chatNew').onclick = fresh;
+  function close(){ panel.classList.remove('open'); disarm(); }
+  $('chatClose').onclick = close;
+  $('chatsBtn').onclick = () => {
+    if (panel.classList.toggle('open')){ say(keep ? '' : $('chatStatus').textContent); who(); refresh(); }
+    else disarm();
+  };
+  addEventListener('keydown', e => { if (e.key === 'Escape' && panel.classList.contains('open')) close(); });
+  addEventListener('pagehide', () => { if (saveT) save(); });
+  return { saveSoon };
+})();
 
 /* ================================================================== *
  * Speech out — Kokoro, with word timings when available
