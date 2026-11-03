@@ -120,7 +120,7 @@ a.arrow('M 872,196 H 904 Q 912,196 912,204 V 260 Q 912,268 920,268 H 968');  a.l
 a.arrow('M 872,364 H 916 Q 924,364 924,356 V 300 Q 924,292 932,292 H 968');  a.label(900, 326, 'CHAT')
 a.arrow('M 872,388 H 968');                             a.label(920, 400, 'RAG · WEB')
 a.node(40, 248, 128, 64, 'input', 'YOU', 'You', ['browser · phone'])
-a.node(232, 248, 144, 64, 'external', 'CDN', 'CloudFront', ['joshuaallentalbott.com'])
+a.node(232, 248, 144, 64, 'external', 'CDN', 'CloudFront', ['your-domain.com'])
 a.node(440, 248, 160, 64, 'backend', 'EDGE', 'nginx on Windows', ['Google sign-in · bans'])
 a.node(712, 56, 160, 64, 'backend', 'IOT', 'Home Assistant', ['Hue · Lutron · TVs :8123'])
 a.node(712, 152, 160, 64, 'focal', 'APP', 'Avatar', [':8702 · talking 3D head'])
