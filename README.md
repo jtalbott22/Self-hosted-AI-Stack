@@ -28,34 +28,15 @@ Everything runs through Docker Compose and communicates over the private Compose
 
 ## Architecture
 
-```text
-                         ┌──────────────────────┐
-                         │      Open WebUI      │
-                         │    localhost:3000    │
-                         └──────────┬───────────┘
-                                    │
-             ┌──────────────────────┼────────────────────────┐
-             │                      │                        │
-             ▼                      ▼                        ▼
-        ┌──────────┐          ┌──────────┐            ┌──────────┐
-        │ llama.cpp│          │  Jupyter │            │ ComfyUI  │
-        │  :8000   │          │  :8888   │            │  :8188   │
-        └────┬─────┘          └──────────┘            └──────────┘
-             │
-             ▼
-       Local GGUF model
+<a href="docs/diagrams/architecture-stack.png"><img src="docs/diagrams/architecture-stack.png" alt="Architecture of the whole stack: you reach the avatar through CloudFront and nginx with Google sign-in, or on the LAN; the avatar and Open WebUI share one local llama.cpp model, the voice services, and search, RAG and tool services, and the avatar controls Home Assistant."></a>
 
-  Open WebUI also connects to:
-    PostgreSQL/pgvector → RAG
-    Tika                  → document extraction
-    SearXNG + Playwright  → web search
-    Kokoro                → TTS
-    Open Terminal         → shell/filesystem
-    GitLab MCP            → GitLab issues, MRs, repos, pipelines
-    Sparkboard            → optional local monitoring
+From outside, `joshuaallentalbott.com` goes through CloudFront to nginx on the Windows host, which asks for a Google sign-in (oauth2-proxy, with authgate banning brute-force attempts); on the LAN, nginx lets you straight in. Open WebUI and the avatar share one local llama.cpp model and the voice services. Open WebUI also uses Postgres/pgvector for RAG, Tika to read documents, SearXNG and Playwright for web search, Jupyter for code, ComfyUI for images, Open Terminal and the GitLab MCP server. Sparkboard (optional) monitors the machine.
 
-  Avatar (optional, localhost:8702) → llama.cpp + Kokoro + LAM Audio2Expression
-```
+<a href="docs/diagrams/architecture-avatar.png"><img src="docs/diagrams/architecture-avatar.png" alt="What the avatar page talks to: Kokoro, Speaches and the LAM lip-sync and maker services for voice and face; the music service; the shared llama.cpp model; the Lens bridge for Open WebUI tools; and, per Google account, saved chats and home control through Home Assistant."></a>
+
+The avatar page reaches everything through relative paths on its own nginx (`:8702` on the LAN, `/avatar/` behind the public nginx), so the browser never makes a cross-origin call. Saved chats and home control are kept per Google account, from the sign-in.
+
+<sub>Both diagrams were drawn to the rules of the stack's own diagram-design tool and rendered by its `render_diagram` function on this stack (an Open WebUI tool, run through the Lens bridge). Sources: [stack](docs/diagrams/architecture-stack.html), [avatar](docs/diagrams/architecture-avatar.html), and the [generator](docs/diagrams/generate.py) that lays them out on the tool's 4px grid.</sub>
 
 ## Hardware expectations
 
