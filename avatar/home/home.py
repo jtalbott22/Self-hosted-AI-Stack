@@ -11,7 +11,12 @@ browser can't choose it). Empty means the LAN, which needs no sign-in and
 is allowed. Anyone else gets 403.
 
   GET  /ok        {"allowed", "ready"}: whether the avatar should offer it
-  POST /command   {"text"} -> {"ok", "reply", "kind", "done"}
+  POST /command   {"text"} -> {"ok", "reply", "kind", "done", "ids"}
+  GET  /devices   ?ids=light.a,switch.b or ?q=basement lights: their states,
+                  for the avatar's controls panel
+  POST /set       {"id", "action", "value"}: one control, from that panel.
+                  Only fixed actions per kind of device; locks can be locked
+                  but never unlocked from here.
 
 Settings (environment): HA_URL (http://host.docker.internal:8123),
 HA_TOKEN (a long-lived access token from your Home Assistant profile),
@@ -19,6 +24,9 @@ OWNERS (comma-separated Google accounts), PORT (8707).
 """
 import json
 import os
+import re
+import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,6 +44,71 @@ def ha(method, path, body=None, timeout=20):
                                  headers={"Authorization": "Bearer " + HA_TOKEN, "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read() or b"null")
+
+
+_areas = {"at": 0, "map": {}}
+_areas_lock = threading.Lock()
+
+
+def areas():
+    """entity_id -> area name (the rooms set up in Home Assistant), kept a minute."""
+    with _areas_lock:
+        if time.time() - _areas["at"] > 60:
+            try:
+                tpl = "{% for s in states %}{{ s.entity_id }}|{{ area_name(s.entity_id) or '' }}\n{% endfor %}"
+                req = urllib.request.Request(HA_URL + "/api/template", method="POST",
+                                             data=json.dumps({"template": tpl}).encode(),
+                                             headers={"Authorization": "Bearer " + HA_TOKEN, "Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    text = r.read().decode()
+                _areas["map"] = dict(line.split("|", 1) for line in text.splitlines() if "|" in line)
+            except Exception as e:
+                print(f"home: couldn't read areas: {e}", flush=True)
+            _areas["at"] = time.time()
+        return _areas["map"]
+
+
+def describe(s, area=""):
+    """One device, as the controls panel needs it."""
+    eid, a, st = s["entity_id"], s["attributes"], s["state"]
+    domain = eid.split(".")[0]
+    d = {"id": eid, "domain": domain, "name": a.get("friendly_name") or eid, "state": st, "area": area}
+    if domain == "light":
+        modes = a.get("supported_color_modes") or []
+        d["dimmable"] = any(m != "onoff" for m in modes)
+        d["brightness"] = round((a.get("brightness") or 0) / 2.55) if st == "on" else 0
+    elif domain == "fan" and a.get("percentage") is not None:
+        d["percentage"] = a.get("percentage")
+    elif domain == "cover" and a.get("current_position") is not None:
+        d["position"] = a.get("current_position")
+    elif domain == "media_player":
+        d["volume"] = round((a.get("volume_level") or 0) * 100) if a.get("volume_level") is not None else None
+        d["title"] = " - ".join(x for x in (a.get("media_artist"), a.get("media_title")) if x) or a.get("app_name") or ""
+    elif domain == "climate":
+        d["current"] = a.get("current_temperature")
+        d["target"] = a.get("temperature")
+        d["unit"] = a.get("temperature_unit") or ""
+        d["step"] = a.get("target_temp_step") or 1
+    return d
+
+
+# What the panel may do: (domain, action) -> (service, how the value goes in)
+ACTIONS = {
+    ("light", "on"): ("turn_on", None), ("light", "off"): ("turn_off", None),
+    ("light", "brightness"): ("turn_on", lambda v: {"brightness_pct": max(1, min(100, int(v)))}),
+    ("switch", "on"): ("turn_on", None), ("switch", "off"): ("turn_off", None),
+    ("fan", "on"): ("turn_on", None), ("fan", "off"): ("turn_off", None),
+    ("fan", "percentage"): ("set_percentage", lambda v: {"percentage": max(0, min(100, int(v)))}),
+    ("cover", "open"): ("open_cover", None), ("cover", "close"): ("close_cover", None), ("cover", "stop"): ("stop_cover", None),
+    ("cover", "position"): ("set_cover_position", lambda v: {"position": max(0, min(100, int(v)))}),
+    ("media_player", "on"): ("turn_on", None), ("media_player", "off"): ("turn_off", None),
+    ("media_player", "play_pause"): ("media_play_pause", None),
+    ("media_player", "volume"): ("volume_set", lambda v: {"volume_level": max(0, min(100, int(v))) / 100}),
+    ("scene", "activate"): ("turn_on", None), ("script", "run"): ("turn_on", None),
+    ("climate", "target"): ("set_temperature", lambda v: {"temperature": float(v)}),
+    ("lock", "lock"): ("lock", None),
+    ("vacuum", "start"): ("start", None), ("vacuum", "home"): ("return_to_base", None),
+}
 
 
 def device_names():
@@ -66,7 +139,44 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def devices(self):
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        ids = [i for i in (qs.get("ids", [""])[0]).split(",") if i]
+        words = [w for w in re.split(r"\W+", (qs.get("q", [""])[0]).lower()) if w and w not in ("the", "all", "and", "in", "my", "of")]
+        try:
+            states = ha("GET", "/api/states")
+        except Exception as e:
+            return self.reply(502, {"error": f"Home Assistant didn't answer ({e})"})
+        amap = areas()
+        out = []
+        for s in states:
+            eid = s["entity_id"]
+            if eid.split(".")[0] not in DEVICE_DOMAINS:
+                continue
+            area = amap.get(eid, "")
+            if ids and eid not in ids:
+                continue
+            if words:
+                hay = " ".join((eid.replace("_", " "), (s["attributes"].get("friendly_name") or ""), area)).lower()
+                # "lights" finds lights, "tv" the TVs and speakers, as well as names
+                hay += {"light": " light lights lamp lamps", "switch": " switch switches light lights",
+                        "media_player": " tv tvs speaker speakers media", "climate": " thermostat temperature heat",
+                        "scene": " scene scenes", "cover": " blinds shades", "fan": " fan fans"}.get(eid.split(".")[0], "")
+                if not all(w.rstrip("s") in hay for w in words):
+                    continue
+            out.append(describe(s, area))
+        if ids:
+            out.sort(key=lambda d: ids.index(d["id"]))
+        else:
+            out.sort(key=lambda d: (d["area"], d["domain"], d["name"]))
+        self.reply(200, {"devices": out[:60]})
+
     def do_GET(self):
+        if self.path.split("?")[0] == "/devices":
+            if not self.allowed():
+                return self.reply(403, {"error": "home control is only for the owner"})
+            return self.devices()
         if self.path.split("?")[0] != "/ok":
             return self.reply(404, {"error": "not found"})
         if not self.allowed():
@@ -81,7 +191,35 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self.reply(200, {"allowed": True, "ready": False, "error": f"can't reach Home Assistant ({e})"})
 
+    def set(self):
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            b = json.loads(self.rfile.read(min(n, 10000)) or b"{}")
+            eid, action, value = str(b.get("id") or ""), str(b.get("action") or ""), b.get("value")
+        except Exception:
+            return self.reply(400, {"ok": False, "error": "bad request"})
+        domain = eid.split(".")[0]
+        spec = ACTIONS.get((domain, action))
+        if not spec or not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", eid):
+            return self.reply(400, {"ok": False, "error": f"can't {action} a {domain}"})
+        service, conv = spec
+        data = {"entity_id": eid}
+        try:
+            if conv:
+                data.update(conv(value))
+            ha("POST", f"/api/services/{domain}/{service}", data)
+            time.sleep(0.4)                            # let the device report back
+            s = ha("GET", f"/api/states/{eid}")
+        except Exception as e:
+            return self.reply(502, {"ok": False, "error": f"Home Assistant didn't do it ({e})"})
+        print(f"home: panel {domain}.{service} {eid}", flush=True)
+        self.reply(200, {"ok": True, "device": describe(s, areas().get(eid, ""))})
+
     def do_POST(self):
+        if self.path.split("?")[0] == "/set":
+            if not self.allowed():
+                return self.reply(403, {"ok": False, "error": "home control is only for the owner"})
+            return self.set()
         if self.path.split("?")[0] != "/command":
             return self.reply(404, {"error": "not found"})
         if not self.allowed():
@@ -101,8 +239,10 @@ class Handler(BaseHTTPRequestHandler):
         resp = (r or {}).get("response") or {}
         speech = ((resp.get("speech") or {}).get("plain") or {}).get("speech") or ""
         kind = resp.get("response_type") or ""
-        done = [t.get("name") for t in ((resp.get("data") or {}).get("success") or []) if t.get("name")]
-        out = {"ok": kind != "error", "reply": speech, "kind": kind, "done": done}
+        hits = [t for t in ((resp.get("data") or {}).get("success") or []) if t.get("type") == "entity"]
+        done = [t.get("name") for t in hits if t.get("name")]
+        out = {"ok": kind != "error", "reply": speech, "kind": kind, "done": done,
+               "ids": [t["id"] for t in hits if t.get("id")][:40]}
         if kind == "error":
             out["code"] = (resp.get("data") or {}).get("code")
             out["devices"] = device_names()

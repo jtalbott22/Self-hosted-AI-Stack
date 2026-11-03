@@ -364,6 +364,8 @@ The avatar can run the house: "turn off the kitchen lights", "set the thermostat
 3. Settings → Voice assistants → Expose: tick what the avatar may control. Leave out anything you'd never want done by voice from afar, such as unlocking doors.
 4. Your profile → Security → Long-lived access tokens: create one, put it in `.env` as `HA_TOKEN`, and `docker compose up -d avatar-home`.
 
+**Controls on screen.** Whatever a command changes gets a Home tab in the Lens with its switches and sliders (brightness, volume, fan speed, blinds, thermostat up and down, play and pause), kept up to date every few seconds while it's showing, and a chip in the chat to bring it back. "Show me the basement lights" or "give me the TV controls" opens them without changing anything (`home_panel`), grouped by the rooms set up in Home Assistant. The panel can lock a lock but never unlock one.
+
 Only the people in `AVATAR_HOME_OWNERS` (comma-separated Google accounts) and the LAN can use it; nginx passes the signed-in account in `X-Avatar-User` (see Saved chats), and everyone else is refused. The token stays in `avatar-home`, never in the page. For the public nginx, add `location /avatar/home/` like `/avatar/chats/` (see `avatar/nginx-google-signin.conf`), proxying to `127.0.0.1:8707/`.
 
 ### Brute-force protection (authgate)

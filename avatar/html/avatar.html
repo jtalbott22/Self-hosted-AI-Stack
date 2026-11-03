@@ -151,6 +151,33 @@
   #chatList li.cur .open b::before{content:"\25CF  ";color:var(--live);font-size:10px;vertical-align:2px}
   #chatList .del{flex:0 0 auto;min-width:44px;background:none;border:0;color:var(--dim);display:grid;place-items:center;padding:0 6px;border-radius:8px}
   #chatList .del svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  /* ---- home controls: a live tab in the Lens ---- */
+  #homePane{position:absolute;inset:0;overflow-y:auto;padding:6px 14px 14px;background:#0b0f14;color:var(--text);-webkit-overflow-scrolling:touch}
+  #homePane[hidden]{display:none}
+  #homePane .hEmpty{color:var(--dim);font-size:14px;padding:18px 2px}
+  #homePane .hArea{margin:14px 2px 2px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+  #homePane .hDev{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:11px 2px;border-top:1px solid var(--line)}
+  #homePane .hDev:first-child,#homePane .hArea + .hDev{border-top:0}
+  #homePane .hName{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #homePane .hSub{grid-column:1;font-size:12.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #homePane .hCtl{grid-column:2;grid-row:1 / span 2;display:flex;gap:8px;align-items:center}
+  #homePane .hWide{grid-column:1 / -1;display:flex;gap:10px;align-items:center}
+  #homePane input[type=range]{flex:1;height:30px;margin:0;-webkit-appearance:none;appearance:none;background:transparent;touch-action:pan-y}
+  #homePane input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(to right,var(--live) var(--p,0%),#323b49 var(--p,0%))}
+  #homePane input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;margin-top:-9px;border-radius:50%;background:#fff;border:0;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+  #homePane input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:#323b49}
+  #homePane input[type=range]::-moz-range-progress{height:6px;border-radius:3px;background:var(--live)}
+  #homePane input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:#fff;border:0}
+  #homePane input[type=range]:disabled{opacity:.5}
+  #homePane button{font:inherit;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent}
+  #homePane .hBtn{padding:7px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);font-size:13.5px}
+  #homePane .tgl{width:50px;height:30px;border-radius:15px;border:1px solid var(--line);background:#2a3240;position:relative;padding:0;transition:background .15s}
+  #homePane .tgl::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#cfd6df;transition:transform .15s}
+  #homePane .tgl.on{background:#2f7d6b;border-color:#3c9a85}
+  #homePane .tgl.on::after{transform:translateX(20px);background:#fff}
+  #homePane .tgl:disabled,#homePane .hBtn:disabled{opacity:.5}
+  #homePane .hVal{min-width:3.2em;text-align:right;font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
+  #homePane .hTemp{font-size:20px;font-variant-numeric:tabular-nums;min-width:3.5em;text-align:center}
   #chatList .del.armed,#chatDelAll.armed{background:#5a2323!important;border-color:#8a3a3a!important;color:#fff!important;font-size:13px}
 
   :root{ --barH: calc(98px + env(safe-area-inset-bottom,0px)); --lensH: 52dvh; }
@@ -2473,7 +2500,8 @@ function caption(user, reply, interim){
 }
 const CHIP_ICON = {
   lens:'<svg viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>',
-  music:'<svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>'
+  music:'<svg viewBox="0 0 24 24"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>',
+  home:'<svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>'
 };
 function renderChat(){
   const html = chat.map((c, i) =>
@@ -2498,6 +2526,7 @@ function reopen(r){
   lipsync.unlock();
   if (r.type === 'lens') lens.add(r.title, r.html);
   else if (r.type === 'music') music.replay(r.item);
+  else if (r.type === 'home') home.show(r.title, r);
 }
 $('capLog').addEventListener('click', e => {
   const t = e.target instanceof Element ? e.target : null;
@@ -2763,7 +2792,7 @@ function settle(){
 
 const TOOL_PROMPT = ' You can use tools. When a tool result is shown on screen, it is already in front of the user in the Lens panel: never read its contents, numbers, or tables aloud — say one short sentence about what is showing. Before anything slow or with side effects, such as running a notebook, ask out loud and wait for a yes. You can hide or reopen the panel with hide_panel and show_panel.';
 
-const HOME_PROMPT = ' You can control the user\u2019s home (lights, plugs, thermostat, TVs and so on) with home_control. Use it whenever they ask for something in the house, then confirm in a few words, such as "Kitchen lights are off."';
+const HOME_PROMPT = ' You can control the user\u2019s home (lights, plugs, thermostat, TVs and so on) with home_control. Use it whenever they ask for something in the house, then confirm in a few words, such as "Kitchen lights are off." Controls for what it changed appear on their screen by themselves. When they want to adjust things themselves or see the controls ("show me the basement lights", "give me the TV controls"), call home_panel instead.';
 const MUSIC_PROMPT = ' You can play songs, artists, genres, live radio stations and podcasts with play_music, and pause, resume, skip or stop them with music_control. When you start something, say only a few words, such as "Here\u2019s Bohemian Rhapsody." It starts as soon as you stop talking. Music pauses while the user talks to you and picks back up afterwards, so never stop it just because they spoke.';
 
 /* Keep the context short, and never start it in the middle of a tool exchange. */
@@ -4760,7 +4789,117 @@ const home = (() => {
         command:{ type:'string', description:'One command or question, in plain English, using the room or device names the user said.' } },
         required:['command'] } } }
   ];
+  TOOLS.push({ type:'function', function:{ name:'home_panel',
+    description:'Show sliders and switches for some of the user’s home devices on their screen, so they can adjust them by hand. Changes nothing by itself.',
+    parameters:{ type:'object', properties:{
+      match:{ type:'string', description:'Which devices: a room, a kind of device, or names, e.g. "basement", "kitchen lights", "tv", "thermostat". Blank for everything.' } } } } });
+
+  /* ---- the controls panel: a live tab in the Lens ---- */
+  const paneEl = document.createElement('div');
+  paneEl.id = 'homePane'; paneEl.hidden = true; paneEl.setAttribute('role', 'region'); paneEl.setAttribute('aria-label', 'Home controls');
+  let what = { ids:[], q:'' }, devs = [], visible = false, pollT = 0, touchedAt = 0;
+  const pane = { shown(on){
+    visible = on;
+    if (on){ const host = $('lensBody'); if (paneEl.parentNode !== host) host.append(paneEl); paneEl.hidden = false; poll(); }
+    else { paneEl.hidden = true; clearTimeout(pollT); }
+  } };
+  async function load(){
+    const path = what.ids && what.ids.length ? 'devices?ids=' + encodeURIComponent(what.ids.join(',')) : 'devices?q=' + encodeURIComponent(what.q || '');
+    const r = await fetch(api(path), { cache:'no-store' });
+    if (!r.ok) throw new Error('status ' + r.status);
+    devs = (await r.json()).devices || [];
+    if (performance.now() - touchedAt > 1500) render();     // not while a slider is being dragged
+    return devs;
+  }
+  async function poll(){
+    clearTimeout(pollT);
+    if (!visible) return;
+    try { await load(); } catch {}
+    if (visible) pollT = setTimeout(poll, 4000);             // a wall switch or another app shows up here too
+  }
+  async function show(title, w, focus = true){
+    what = { ids:w.ids || [], q:w.q || '' };
+    try { await load(); } catch (e){ devs = []; paneEl.innerHTML = '<p class="hEmpty">Couldn’t reach Home Assistant (' + esc(e.message) + ').</p>'; }
+    lens.pane('home', '⌂ ' + title, pane, focus);
+    return devs;
+  }
+  const pct = v => Math.round(v) + '%';
+  function row(d){
+    const on = d.state === 'on' || d.state === 'playing' || d.state === 'paused' || d.state === 'idle' || d.state === 'open';
+    const off = d.state === 'unavailable';
+    const tgl = (a = on ? 'off' : 'on') => `<button class="tgl${on ? ' on' : ''}" data-a="${a}" role="switch" aria-checked="${on}" aria-label="${esc(d.name)}"${off ? ' disabled' : ''}></button>`;
+    const range = (a, v, min = 0) => `<div class="hWide"><input type="range" min="${min}" max="100" value="${v ?? 0}" style="--p:${v ?? 0}%" data-a="${a}" aria-label="${esc(d.name)} ${a}"${off ? ' disabled' : ''}><span class="hVal">${pct(v ?? 0)}</span></div>`;
+    let sub = off ? 'Unavailable' : '', ctl = '', wide = '';
+    switch (d.domain){
+      case 'light':
+        sub = sub || (on ? (d.dimmable ? pct(d.brightness) : 'On') : 'Off');
+        ctl = tgl(); if (d.dimmable) wide = range('brightness', on ? d.brightness : 0, 1); break;
+      case 'switch': sub = sub || (on ? 'On' : 'Off'); ctl = tgl(); break;
+      case 'fan': sub = sub || (on ? 'On' : 'Off'); ctl = tgl(); if (d.percentage != null) wide = range('percentage', d.percentage); break;
+      case 'media_player':
+        sub = sub || [d.state[0].toUpperCase() + d.state.slice(1), d.title].filter(Boolean).join(' · ');
+        ctl = (on ? `<button class="hBtn" data-a="play_pause">${d.state === 'playing' ? 'Pause' : 'Play'}</button>` : '') + tgl();
+        if (on && d.volume != null) wide = range('volume', d.volume); break;
+      case 'scene': ctl = '<button class="hBtn" data-a="activate">Activate</button>'; break;
+      case 'script': ctl = '<button class="hBtn" data-a="run">Run</button>'; break;
+      case 'cover':
+        sub = sub || d.state; ctl = '<button class="hBtn" data-a="open">Open</button><button class="hBtn" data-a="stop">Stop</button><button class="hBtn" data-a="close">Close</button>';
+        if (d.position != null) wide = range('position', d.position); break;
+      case 'climate':
+        sub = sub || [d.state, d.current != null ? 'now ' + d.current + d.unit : ''].filter(Boolean).join(' · ');
+        ctl = `<button class="hBtn" data-a="target" data-v="${(d.target ?? 0) - d.step}" aria-label="Cooler">−</button><span class="hTemp">${d.target ?? '–'}${d.unit}</span><button class="hBtn" data-a="target" data-v="${(d.target ?? 0) + d.step}" aria-label="Warmer">+</button>`; break;
+      case 'lock': sub = sub || d.state; ctl = d.state === 'unlocked' ? '<button class="hBtn" data-a="lock">Lock</button>' : ''; break;
+      case 'vacuum': sub = sub || d.state; ctl = '<button class="hBtn" data-a="start">Start</button><button class="hBtn" data-a="home">Dock</button>'; break;
+    }
+    return `<div class="hDev" data-id="${esc(d.id)}"><span class="hName">${esc(d.name)}</span><span class="hSub">${esc(sub)}</span><span class="hCtl">${ctl}</span>${wide}</div>`;
+  }
+  function render(){
+    if (!devs.length){ paneEl.innerHTML = '<p class="hEmpty">No matching devices.</p>'; return; }
+    const groups = what.ids && what.ids.length ? [['', devs]] : [...devs.reduce((m, d) => m.set(d.area, [...(m.get(d.area) || []), d]), new Map())];
+    const keep = paneEl.scrollTop;
+    paneEl.innerHTML = groups.map(([area, ds]) => (groups.length > 1 ? `<div class="hArea">${esc(area || 'Other')}</div>` : '') + ds.map(row).join('')).join('');
+    paneEl.scrollTop = keep;
+  }
+  async function set(id, action, value){
+    touchedAt = performance.now();
+    const rowEl = paneEl.querySelector(`.hDev[data-id="${CSS.escape(id)}"]`);
+    rowEl?.querySelectorAll('button,input').forEach(x => x.disabled = true);
+    try {
+      const r = await fetch(api('set'), { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ id, action, value }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error(j.error || 'status ' + r.status);
+      const k = devs.findIndex(d => d.id === id);
+      if (k >= 0) devs[k] = j.device;
+    } catch (e){ showError('Home Assistant: ' + (e.message || e)); }
+    touchedAt = 0; render();
+  }
+  paneEl.addEventListener('click', e => {
+    const b = e.target.closest('button[data-a]'); if (!b) return;
+    const id = b.closest('.hDev').dataset.id;
+    set(id, b.dataset.a, b.dataset.v != null ? +b.dataset.v : undefined);
+  });
+  paneEl.addEventListener('input', e => {
+    if (e.target.type !== 'range') return;
+    touchedAt = performance.now();
+    e.target.style.setProperty('--p', e.target.value + '%');
+    const v = e.target.closest('.hWide')?.querySelector('.hVal'); if (v) v.textContent = pct(+e.target.value);
+  });
+  paneEl.addEventListener('change', e => {
+    if (e.target.type !== 'range') return;
+    set(e.target.closest('.hDev').dataset.id, e.target.dataset.a, +e.target.value);
+  });
+  ['pointerdown', 'touchstart'].forEach(ev => paneEl.addEventListener(ev, () => { touchedAt = performance.now(); }, { passive:true }));
+
   async function run(name, args){
+    if (name === 'home_panel'){
+      const q = String(args.match || '').trim();
+      const title = q ? q[0].toUpperCase() + q.slice(1) : 'Home';
+      const ds = await show(title, { q });
+      if (!ds.length) return 'No devices matched “' + q + '”. Nothing is showing.';
+      chatResult({ type:'home', title, q });
+      return 'Controls for ' + ds.length + ' device' + (ds.length === 1 ? '' : 's') + ' are now on the user’s screen (' +
+        ds.slice(0, 12).map(d => d.name).join(', ') + (ds.length > 12 ? ', …' : '') + '). Say one short sentence; don’t list them.';
+    }
     const r = await fetch(api('command'), { method:'POST', headers:{ 'Content-Type':'application/json' },
       body:JSON.stringify({ text:String(args.command || '') }) });
     const j = await r.json().catch(() => ({}));
@@ -4769,10 +4908,16 @@ const home = (() => {
       return 'Home Assistant couldn’t do that: ' + (j.reply || j.error || 'status ' + r.status) +
         (j.devices && j.devices.length ? '\nDevices it knows: ' + j.devices.join('; ') + '\nIf one of these is clearly what the user meant, try again with its name; otherwise ask them.' : '');
     }
+    // What it changed gets its controls on screen, and a chip in the chat to bring them back.
+    if (j.kind === 'action_done' && j.ids && j.ids.length){
+      const title = j.done.length === 1 ? j.done[0] : String(args.command || 'Home').replace(/^./, c => c.toUpperCase()).slice(0, 40);
+      show(title, { ids:j.ids }).catch(() => {});
+      chatResult({ type:'home', title, ids:j.ids });
+    }
     // For an action, which devices it acted on; a question's matches aren't the answer (they include ones that are off).
     return (j.reply || 'Done.') + (j.kind === 'action_done' && j.done && j.done.length ? ' (' + j.done.join(', ') + ')' : '');
   }
-  return { tools: () => ready ? TOOLS : [], handles: n => n === 'home_control', run, ready: () => ready };
+  return { tools: () => ready ? TOOLS : [], handles: n => n === 'home_control' || n === 'home_panel', run, ready: () => ready, show };
 })();
 
 /* ================================================================== *
