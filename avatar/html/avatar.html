@@ -131,22 +131,31 @@
   #chatsBtn:focus-visible{outline:2px solid var(--live);outline-offset:3px}
 
   /* ---- saved chats: a panel from the left ---- */
-  #chatsPanel{position:fixed;z-index:10;top:0;left:0;bottom:0;width:min(400px,100vw);
-    background:var(--ink-2);border-right:1px solid var(--line);
-    padding:calc(env(safe-area-inset-top,0px) + 22px) 22px calc(22px + env(safe-area-inset-bottom,0px));
-    overflow-y:auto;transform:translateX(-100%);transition:transform .22s ease}
+  /* ---- saved chats: a panel from the left, built like Setup ---- */
+  #chatsPanel{position:fixed;z-index:10;top:0;left:0;bottom:0;width:min(420px,100vw);
+    display:flex;flex-direction:column;background:var(--ink-2);border-right:1px solid var(--line);
+    transform:translateX(-100%);transition:transform .24s cubic-bezier(.2,.8,.2,1);touch-action:pan-y}
   #chatsPanel.open{transform:none}
-  #chatsPanel .chHead{display:flex;align-items:center;justify-content:space-between;gap:12px}
-  #chatsPanel h2{margin:0;font-size:17px;font-weight:600}
+  #chatsPanel.dragging{transition:none}
+  #chatsPanel h2{margin:0;flex:1;font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+  #chatsPanel .sHead{align-items:center}
+  #chatsPanel .sHint{margin:0 4px 8px}
   #chatsPanel p.note{margin:6px 0;color:var(--dim);font-size:13px;line-height:1.5}
+  #chatsPanel p.note:empty{display:none}
   #chatsPanel p.note.bad{color:#e8b84b}
   #chatsPanel button{font:inherit;color:var(--text);cursor:pointer}
-  #chatNew{padding:8px 14px;border-radius:8px;border:1px solid #31545a;background:#20303a;font-size:14px}
-  #chatList{list-style:none;margin:10px 0 0;padding:0}
+  #chatNew{padding:9px 16px;border-radius:999px;border:1px solid #3c9a85;background:#2f7d6b;color:#fff!important;font-size:14.5px!important;font-weight:600}
+  #chatList{list-style:none;margin:0 0 12px;padding:2px 6px;background:#121821;border:1px solid var(--line);border-radius:16px}
   #chatList li{display:flex;align-items:stretch;gap:6px;border-top:1px solid var(--line)}
-  #chatList li.none{color:var(--dim);font-size:14px;padding:14px 2px;border:0}
-  #chatList .open{flex:1;min-width:0;text-align:left;background:none;border:0;padding:11px 4px;display:flex;flex-direction:column;gap:3px}
-  #chatList .open b{font-weight:500;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #chatList li:first-child{border-top:0}
+  #chatList li.none{color:var(--dim);font-size:14px;padding:16px 10px;border:0}
+  #chatsPanel .chCard{background:#121821;border:1px solid var(--line);border-radius:16px;padding:2px 16px 10px}
+  #chatsPanel .chCard label.check{font-size:15px;font-weight:600}
+  #chatsPanel .chCard p.note{margin-top:2px}
+  #chatsPanel .sFoot button{flex:1}
+  #chatsPanel #chatDelAll{color:#e9a3a3}
+  #chatList .open{flex:1;min-width:0;text-align:left;background:none;border:0;padding:13px 8px;display:flex;flex-direction:column;gap:3px}
+  #chatList .open b{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #chatList .open span{font-size:12.5px;color:var(--dim)}
   #chatList li.cur .open b::before{content:"\25CF  ";color:var(--live);font-size:10px;vertical-align:2px}
   #chatList .del{flex:0 0 auto;min-width:44px;background:none;border:0;color:var(--dim);display:grid;place-items:center;padding:0 6px;border-radius:8px}
@@ -347,17 +356,17 @@
     transform:translateX(100%);transition:transform .24s cubic-bezier(.2,.8,.2,1);touch-action:pan-y}
   #settings.open{transform:none}
   #settings.dragging{transition:none}
-  #settings .sHead{flex:none;display:flex;align-items:baseline;gap:12px;
+  :is(#settings,#chatsPanel) .sHead{flex:none;display:flex;align-items:baseline;gap:12px;
     padding:calc(env(safe-area-inset-top,0px) + 18px) 20px 14px;border-bottom:1px solid var(--line)}
   #settings h2{margin:0;flex:1;font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
-  #settings .sHint{font-size:12px;color:var(--dim);display:none}
-  @media (hover:none) and (max-width:600px){ #settings .sHint{display:inline} }
-  #settings .sBody{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 12px 24px;-webkit-overflow-scrolling:touch}
-  #settings .sFoot{flex:none;display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));
+  :is(#settings,#chatsPanel) .sHint{font-size:12px;color:var(--dim);display:none}
+  @media (hover:none) and (max-width:600px){ #settings .sHint{display:inline} #chatsPanel .sHint{display:block} }
+  :is(#settings,#chatsPanel) .sBody{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 12px 24px;-webkit-overflow-scrolling:touch}
+  :is(#settings,#chatsPanel) .sFoot{flex:none;display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));
     border-top:1px solid var(--line);background:var(--ink-2)}
-  #settings .sFoot button{flex:1;padding:13px 10px;border-radius:12px;border:1px solid var(--line);background:var(--panel);
+  :is(#settings,#chatsPanel) .sFoot button{flex:1;padding:13px 10px;border-radius:12px;border:1px solid var(--line);background:var(--panel);
     color:var(--text);font:inherit;font-size:15.5px;font-weight:600;cursor:pointer}
-  #settings .sFoot button.primary{background:#2f7d6b;border-color:#3c9a85;color:#fff}
+  :is(#settings,#chatsPanel) .sFoot button.primary{background:#2f7d6b;border-color:#3c9a85;color:#fff}
   /* each section: a card whose title anchors it; tap the title to open or close it */
   #settings details.sec{background:#121821;border:1px solid var(--line);border-radius:16px;margin:0 0 12px;overflow:hidden}
   #settings details.sec > summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:1fr auto;column-gap:12px;
@@ -665,12 +674,17 @@
 </div>
 
 <aside id="chatsPanel" aria-label="Saved chats">
-  <div class="chHead"><h2>Chats</h2><button id="chatNew" type="button">New chat</button></div>
-  <p class="note" id="chatWho"></p>
-  <label class="check"><input type="checkbox" id="chatKeep"> Save my chats</label>
-  <p class="note" id="chatStatus"></p>
-  <ul id="chatList"></ul>
-  <div class="row"><button id="chatDelAll" type="button">Delete all chats</button><button id="chatClose" type="button">Close</button></div>
+  <header class="sHead"><h2>Chats</h2><button id="chatNew" type="button">New chat</button></header>
+  <div class="sBody">
+    <p class="sHint">Swipe left to close</p>
+    <p class="note" id="chatStatus"></p>
+    <ul id="chatList"></ul>
+    <div class="chCard">
+      <label class="check"><input type="checkbox" id="chatKeep"> Save my chats</label>
+      <p class="note" id="chatWho"></p>
+    </div>
+  </div>
+  <footer class="sFoot"><button id="chatDelAll" type="button">Delete all chats</button><button id="chatClose" type="button">Close</button></footer>
 </aside>
 
 <div id="music" role="region" aria-label="Now playing">
@@ -1107,17 +1121,18 @@ if (siteHide && !new URLSearchParams(location.search).has('setup')){
 }
 $('cfgBtn').onclick   = () => $('settings').classList.toggle('open');
 $('closeCfg').onclick = () => { $('settings').classList.remove('open'); backCam.apply(CFG); };   // drop an unsaved preview
-/* Setup closes with a swipe to the right (phones), or Escape. The panel follows
-   the finger; let go past a third of its width, or flick, and it closes. */
-(() => {
-  const el = $('settings'); let g = null;
+/* A side panel closes with a swipe toward its own edge (phones): it follows
+   the finger; let go past a third of its width, or flick, and it closes.
+   side: 1 for a panel on the right (swipe right), -1 on the left. */
+function swipeToClose(el, side, close){
+  let g = null;
   el.addEventListener('touchstart', e => {
     if (e.touches.length !== 1 || e.target.closest('input[type=range],textarea')) { g = null; return; }
-    const t = e.touches[0]; g = { x:t.clientX, y:t.clientY, dir:'', dx:0, trail:[] };
+    const t = e.touches[0]; g = { x:t.clientX, y:t.clientY, dir:'', d:0, trail:[] };
   }, { passive:true });
   el.addEventListener('touchmove', e => {
     if (!g) return;
-    const t = e.touches[0], dx = t.clientX - g.x, dy = t.clientY - g.y;
+    const t = e.touches[0], dx = (t.clientX - g.x) * side, dy = t.clientY - g.y;
     if (!g.dir){
       if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
       g.dir = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3 ? 'x' : 'y';       // a sideways swipe; anything else scrolls
@@ -1125,20 +1140,25 @@ $('closeCfg').onclick = () => { $('settings').classList.remove('open'); backCam.
     }
     if (g.dir !== 'x') return;
     e.preventDefault();
-    g.dx = Math.max(0, dx); el.style.transform = `translateX(${g.dx}px)`;
-    const now = performance.now(); g.trail.push([now, g.dx]); while (g.trail.length > 2 && now - g.trail[0][0] > 100) g.trail.shift();
+    g.d = Math.max(0, dx); el.style.transform = `translateX(${g.d * side}px)`;
+    const now = performance.now(); g.trail.push([now, g.d]); while (g.trail.length > 2 && now - g.trail[0][0] > 100) g.trail.shift();
   }, { passive:false });
   const end = () => {
     if (!g) return;
     const drag = g; g = null;
     if (drag.dir !== 'x') return;
-    const [t0, x0] = drag.trail[0] || [0, 0], ms = performance.now() - t0;   // speed over the last tenth of a second: a flick
-    const fast = ms > 0 && ms < 200 && (drag.dx - x0) / ms > 0.5;
+    const [t0, d0] = drag.trail[0] || [0, 0], ms = performance.now() - t0;   // speed over the last tenth of a second: a flick
+    const fast = ms > 0 && ms < 200 && (drag.d - d0) / ms > 0.5;
     el.classList.remove('dragging');
-    if (drag.dx > el.offsetWidth / 3 || (fast && drag.dx > 40)) $('closeCfg').click();   // slides on from where the finger left it
+    if (drag.d > el.offsetWidth / 3 || (fast && drag.d > 40)) close();     // slides on from where the finger left it
     el.style.transform = '';
   };
   el.addEventListener('touchend', end); el.addEventListener('touchcancel', end);
+}
+/* Setup: swipe right, or Escape, closes it; it remembers which sections were open. */
+(() => {
+  const el = $('settings');
+  swipeToClose(el, 1, () => $('closeCfg').click());
   addEventListener('keydown', e => { if (e.key === 'Escape' && el.classList.contains('open')) $('closeCfg').click(); });
   // which sections were left open, on this device
   const KEY = 'avatarSetupOpen';
@@ -3192,6 +3212,7 @@ const chats = (() => {
     else disarm();
   };
   addEventListener('keydown', e => { if (e.key === 'Escape' && panel.classList.contains('open')) close(); });
+  swipeToClose(panel, -1, close);
   addEventListener('pagehide', () => { if (saveT) save(); });
   return { saveSoon };
 })();
