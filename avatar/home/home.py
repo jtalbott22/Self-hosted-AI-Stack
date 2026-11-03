@@ -14,7 +14,9 @@ is allowed. Anyone else gets 403.
   POST /command   {"text"} -> {"ok", "reply", "kind", "done", "ids"}
   GET  /devices   ?ids=light.a,switch.b or ?q=basement lights: their states,
                   for the avatar's controls panel
-  POST /set       {"id", "action", "value"}: one control, from that panel.
+  POST /set       {"id", "action", "value", "quick"}: one control, from that
+                  panel. "quick" (while a slider is being dragged) sends it
+                  and returns at once, without reading the device back.
                   Only fixed actions per kind of device; locks can be locked
                   but never unlocked from here.
 
@@ -196,6 +198,7 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
             b = json.loads(self.rfile.read(min(n, 10000)) or b"{}")
             eid, action, value = str(b.get("id") or ""), str(b.get("action") or ""), b.get("value")
+            quick = bool(b.get("quick"))
         except Exception:
             return self.reply(400, {"ok": False, "error": "bad request"})
         domain = eid.split(".")[0]
@@ -208,11 +211,13 @@ class Handler(BaseHTTPRequestHandler):
             if conv:
                 data.update(conv(value))
             ha("POST", f"/api/services/{domain}/{service}", data)
+            if quick:
+                return self.reply(200, {"ok": True})
             time.sleep(0.4)                            # let the device report back
             s = ha("GET", f"/api/states/{eid}")
         except Exception as e:
             return self.reply(502, {"ok": False, "error": f"Home Assistant didn't do it ({e})"})
-        print(f"home: panel {domain}.{service} {eid}", flush=True)
+        print(f"home: panel {domain}.{service} {eid}" + (f" {value}" if value is not None else ""), flush=True)
         self.reply(200, {"ok": True, "device": describe(s, areas().get(eid, ""))})
 
     def do_POST(self):

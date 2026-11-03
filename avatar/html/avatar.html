@@ -151,33 +151,34 @@
   #chatList li.cur .open b::before{content:"\25CF  ";color:var(--live);font-size:10px;vertical-align:2px}
   #chatList .del{flex:0 0 auto;min-width:44px;background:none;border:0;color:var(--dim);display:grid;place-items:center;padding:0 6px;border-radius:8px}
   #chatList .del svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-  /* ---- home controls: a live tab in the Lens ---- */
-  #homePane{position:absolute;inset:0;overflow-y:auto;padding:6px 14px 14px;background:#0b0f14;color:var(--text);-webkit-overflow-scrolling:touch}
+  /* ---- home controls: a live tab in the Lens, tiles like a phone's home app ---- */
+  #homePane{position:absolute;inset:0;overflow-y:auto;padding:4px 14px 16px;background:#0b0f14;color:var(--text);-webkit-overflow-scrolling:touch}
   #homePane[hidden]{display:none}
   #homePane .hEmpty{color:var(--dim);font-size:14px;padding:18px 2px}
-  #homePane .hArea{margin:14px 2px 2px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
-  #homePane .hDev{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:11px 2px;border-top:1px solid var(--line)}
-  #homePane .hDev:first-child,#homePane .hArea + .hDev{border-top:0}
-  #homePane .hName{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #homePane .hSub{grid-column:1;font-size:12.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #homePane .hCtl{grid-column:2;grid-row:1 / span 2;display:flex;gap:8px;align-items:center}
-  #homePane .hWide{grid-column:1 / -1;display:flex;gap:10px;align-items:center}
-  #homePane input[type=range]{flex:1;height:30px;margin:0;-webkit-appearance:none;appearance:none;background:transparent;touch-action:pan-y}
-  #homePane input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(to right,var(--live) var(--p,0%),#323b49 var(--p,0%))}
-  #homePane input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;margin-top:-9px;border-radius:50%;background:#fff;border:0;box-shadow:0 1px 4px rgba(0,0,0,.5)}
-  #homePane input[type=range]::-moz-range-track{height:6px;border-radius:3px;background:#323b49}
-  #homePane input[type=range]::-moz-range-progress{height:6px;border-radius:3px;background:var(--live)}
-  #homePane input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:#fff;border:0}
-  #homePane input[type=range]:disabled{opacity:.5}
+  #homePane .hGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:16px 12px;align-items:start}
+  #homePane .hArea{grid-column:1 / -1;margin:10px 2px -6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+  #homePane .hTile{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0}
+  #homePane .hTile.wide{grid-column:span 2}
+  #homePane .tName{font-size:13px;line-height:1.25;text-align:center;max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  #homePane .tSub{font-size:12px;color:var(--dim);text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-4px}
+  /* the fat vertical slider: fills from the bottom; drag to set, tap to switch */
+  #homePane .vs{position:relative;width:78px;height:156px;border-radius:24px;overflow:hidden;cursor:pointer;
+    background:#262e3a;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
+  #homePane .vs:focus-visible{outline:2px solid var(--live);outline-offset:3px}
+  #homePane .vs .fill{position:absolute;left:0;right:0;bottom:0;height:var(--p,0%);background:#f3efe4;transition:height .12s ease-out}
+  #homePane .vs.dragging .fill{transition:none}
+  #homePane .vs.vol .fill{background:#e2e7ee}
+  #homePane .vs svg{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);width:24px;height:24px;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;
+    stroke:var(--dim);mix-blend-mode:normal}
+  #homePane .vs.lit svg{stroke:#3a3426}
+  #homePane .vs.off-line{opacity:.45;cursor:default}
+  #homePane .tBtns{display:flex;gap:6px;justify-content:center;flex-wrap:wrap}
   #homePane button{font:inherit;color:var(--text);cursor:pointer;-webkit-tap-highlight-color:transparent}
-  #homePane .hBtn{padding:7px 12px;border-radius:9px;border:1px solid var(--line);background:var(--panel);font-size:13.5px}
-  #homePane .tgl{width:50px;height:30px;border-radius:15px;border:1px solid var(--line);background:#2a3240;position:relative;padding:0;transition:background .15s}
-  #homePane .tgl::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#cfd6df;transition:transform .15s}
-  #homePane .tgl.on{background:#2f7d6b;border-color:#3c9a85}
-  #homePane .tgl.on::after{transform:translateX(20px);background:#fff}
-  #homePane .tgl:disabled,#homePane .hBtn:disabled{opacity:.5}
-  #homePane .hVal{min-width:3.2em;text-align:right;font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums}
-  #homePane .hTemp{font-size:20px;font-variant-numeric:tabular-nums;min-width:3.5em;text-align:center}
+  #homePane .hBtn{padding:7px 12px;border-radius:12px;border:1px solid var(--line);background:var(--panel);font-size:13.5px;min-width:44px}
+  #homePane .hBtn:disabled{opacity:.5}
+  #homePane .hBig{width:100%;min-height:64px;border-radius:20px;border:1px solid var(--line);background:#1b222c;font-size:14px;padding:10px}
+  #homePane .hTemp{font-size:30px;font-variant-numeric:tabular-nums;line-height:1}
   #chatList .del.armed,#chatDelAll.armed{background:#5a2323!important;border-color:#8a3a3a!important;color:#fff!important;font-size:13px}
 
   :root{ --barH: calc(98px + env(safe-area-inset-bottom,0px)); --lensH: 52dvh; }
@@ -4824,71 +4825,150 @@ const home = (() => {
     return devs;
   }
   const pct = v => Math.round(v) + '%';
-  function row(d){
-    const on = d.state === 'on' || d.state === 'playing' || d.state === 'paused' || d.state === 'idle' || d.state === 'open';
-    const off = d.state === 'unavailable';
-    const tgl = (a = on ? 'off' : 'on') => `<button class="tgl${on ? ' on' : ''}" data-a="${a}" role="switch" aria-checked="${on}" aria-label="${esc(d.name)}"${off ? ' disabled' : ''}></button>`;
-    const range = (a, v, min = 0) => `<div class="hWide"><input type="range" min="${min}" max="100" value="${v ?? 0}" style="--p:${v ?? 0}%" data-a="${a}" aria-label="${esc(d.name)} ${a}"${off ? ' disabled' : ''}><span class="hVal">${pct(v ?? 0)}</span></div>`;
-    let sub = off ? 'Unavailable' : '', ctl = '', wide = '';
+  const ICON = {
+    light:'<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/>',
+    switch:'<rect x="7" y="3" width="10" height="18" rx="3"/><path d="M12 7v4"/>',
+    fan:'<circle cx="12" cy="12" r="2"/><path d="M12 10c0-4 1-7 4-7s2 5-2 7M14 12c4 0 7 1 7 4s-5 2-7-2M12 14c0 4-1 7-4 7s-2-5 2-7M10 12c-4 0-7-1-7-4s5-2 7 2"/>',
+    cover:'<path d="M4 4h16M5 4v16M19 4v16M5 9h14M5 14h14"/>',
+    media_player:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'
+  };
+  const icon = k => `<svg viewBox="0 0 24 24">${ICON[k] || ICON.light}</svg>`;
+  const isOn = d => ['on', 'playing', 'paused', 'idle', 'open', 'opening'].includes(d.state);
+  // The slider each kind of device gets, if any: what it sets and its level now (0-100).
+  function slider(d){
+    const on = isOn(d);
+    if (d.domain === 'light') return { a: d.dimmable ? 'brightness' : null, p: on ? (d.dimmable && d.brightness ? d.brightness : 100) : 0 };   // on, level not reported yet: full
+    if (d.domain === 'switch') return { a:null, p: on ? 100 : 0 };
+    if (d.domain === 'fan') return { a: d.percentage != null ? 'percentage' : null, p: on ? (d.percentage ?? 100) : 0 };
+    if (d.domain === 'cover' && d.position != null) return { a:'position', p:d.position };
+    if (d.domain === 'media_player' && on && d.volume != null) return { a:'volume', p:d.volume, vol:true };
+    return null;
+  }
+  function tile(d){
+    const on = isOn(d), gone = d.state === 'unavailable', sl = slider(d);
+    let sub = gone ? 'Unavailable' : '', body = '', btns = '', wide = false;
+    if (sl){
+      const k = d.domain === 'media_player' ? 'media_player' : d.domain;
+      body = `<div class="vs${sl.vol ? ' vol' : ''}${sl.p > 0 && !sl.vol ? ' lit' : ''}${gone ? ' off-line' : ''}" tabindex="${gone ? -1 : 0}" role="slider"` +
+        ` aria-label="${esc(d.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(sl.p)}"` +
+        ` data-a="${sl.a || ''}" data-p="${sl.p}" style="--p:${sl.p}%"><div class="fill"></div>${icon(k)}</div>`;
+    }
     switch (d.domain){
-      case 'light':
-        sub = sub || (on ? (d.dimmable ? pct(d.brightness) : 'On') : 'Off');
-        ctl = tgl(); if (d.dimmable) wide = range('brightness', on ? d.brightness : 0, 1); break;
-      case 'switch': sub = sub || (on ? 'On' : 'Off'); ctl = tgl(); break;
-      case 'fan': sub = sub || (on ? 'On' : 'Off'); ctl = tgl(); if (d.percentage != null) wide = range('percentage', d.percentage); break;
+      case 'light': case 'fan':
+        sub = sub || (on ? (sl.a ? pct(sl.p) : 'On') : 'Off'); break;
+      case 'switch': sub = sub || (on ? 'On' : 'Off'); break;
       case 'media_player':
         sub = sub || [d.state[0].toUpperCase() + d.state.slice(1), d.title].filter(Boolean).join(' · ');
-        ctl = (on ? `<button class="hBtn" data-a="play_pause">${d.state === 'playing' ? 'Pause' : 'Play'}</button>` : '') + tgl();
-        if (on && d.volume != null) wide = range('volume', d.volume); break;
-      case 'scene': ctl = '<button class="hBtn" data-a="activate">Activate</button>'; break;
-      case 'script': ctl = '<button class="hBtn" data-a="run">Run</button>'; break;
+        btns = (on ? `<button class="hBtn" data-a="play_pause" aria-label="${d.state === 'playing' ? 'Pause' : 'Play'}">${d.state === 'playing' ? '❚❚' : '▶'}</button>` : '') +
+               `<button class="hBtn" data-a="${on ? 'off' : 'on'}" aria-label="Power">⏻</button>`;
+        if (!sl) body = `<button class="hBig" data-a="${on ? 'play_pause' : 'on'}">${on ? (d.state === 'playing' ? 'Pause' : 'Play') : 'Turn on'}</button>`, btns = on ? '<button class="hBtn" data-a="off" aria-label="Power">⏻</button>' : '';
+        break;
       case 'cover':
-        sub = sub || d.state; ctl = '<button class="hBtn" data-a="open">Open</button><button class="hBtn" data-a="stop">Stop</button><button class="hBtn" data-a="close">Close</button>';
-        if (d.position != null) wide = range('position', d.position); break;
+        sub = sub || (d.position != null ? pct(d.position) + ' open' : d.state);
+        btns = '<button class="hBtn" data-a="open" aria-label="Open">▲</button><button class="hBtn" data-a="stop" aria-label="Stop">■</button><button class="hBtn" data-a="close" aria-label="Close">▼</button>'; break;
+      case 'scene': body = `<button class="hBig" data-a="activate">Activate</button>`; wide = true; break;
+      case 'script': body = `<button class="hBig" data-a="run">Run</button>`; wide = true; break;
       case 'climate':
         sub = sub || [d.state, d.current != null ? 'now ' + d.current + d.unit : ''].filter(Boolean).join(' · ');
-        ctl = `<button class="hBtn" data-a="target" data-v="${(d.target ?? 0) - d.step}" aria-label="Cooler">−</button><span class="hTemp">${d.target ?? '–'}${d.unit}</span><button class="hBtn" data-a="target" data-v="${(d.target ?? 0) + d.step}" aria-label="Warmer">+</button>`; break;
-      case 'lock': sub = sub || d.state; ctl = d.state === 'unlocked' ? '<button class="hBtn" data-a="lock">Lock</button>' : ''; break;
-      case 'vacuum': sub = sub || d.state; ctl = '<button class="hBtn" data-a="start">Start</button><button class="hBtn" data-a="home">Dock</button>'; break;
+        body = `<span class="hTemp">${d.target ?? '–'}${d.target != null ? '°' : ''}</span>`;
+        btns = `<button class="hBtn" data-a="target" data-v="${(d.target ?? 0) - d.step}" aria-label="Cooler">−</button><button class="hBtn" data-a="target" data-v="${(d.target ?? 0) + d.step}" aria-label="Warmer">+</button>`; break;
+      case 'lock': sub = sub || d.state; body = d.state === 'unlocked' ? '<button class="hBig" data-a="lock">Lock</button>' : ''; break;
+      case 'vacuum': sub = sub || d.state; btns = '<button class="hBtn" data-a="start">Start</button><button class="hBtn" data-a="home">Dock</button>'; break;
     }
-    return `<div class="hDev" data-id="${esc(d.id)}"><span class="hName">${esc(d.name)}</span><span class="hSub">${esc(sub)}</span><span class="hCtl">${ctl}</span>${wide}</div>`;
+    return `<div class="hTile${wide ? ' wide' : ''}" data-id="${esc(d.id)}">${body}<span class="tName">${esc(d.name)}</span>` +
+      (sub ? `<span class="tSub">${esc(sub)}</span>` : '') + (btns ? `<div class="tBtns">${btns}</div>` : '') + '</div>';
   }
+  let dragging = null;
   function render(){
+    if (dragging) return;                                   // never redraw under a finger
     if (!devs.length){ paneEl.innerHTML = '<p class="hEmpty">No matching devices.</p>'; return; }
     const groups = what.ids && what.ids.length ? [['', devs]] : [...devs.reduce((m, d) => m.set(d.area, [...(m.get(d.area) || []), d]), new Map())];
     const keep = paneEl.scrollTop;
-    paneEl.innerHTML = groups.map(([area, ds]) => (groups.length > 1 ? `<div class="hArea">${esc(area || 'Other')}</div>` : '') + ds.map(row).join('')).join('');
+    paneEl.innerHTML = '<div class="hGrid">' + groups.map(([area, ds]) =>
+      (groups.length > 1 ? `<div class="hArea">${esc(area || 'Other')}</div>` : '') + ds.map(tile).join('')).join('') + '</div>';
     paneEl.scrollTop = keep;
   }
-  async function set(id, action, value){
-    touchedAt = performance.now();
-    const rowEl = paneEl.querySelector(`.hDev[data-id="${CSS.escape(id)}"]`);
-    rowEl?.querySelectorAll('button,input').forEach(x => x.disabled = true);
+  async function set(id, action, value, quick){
+    if (!quick) touchedAt = performance.now();
     try {
-      const r = await fetch(api('set'), { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ id, action, value }) });
+      const r = await fetch(api('set'), { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ id, action, value, quick:!!quick }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) throw new Error(j.error || 'status ' + r.status);
-      const k = devs.findIndex(d => d.id === id);
-      if (k >= 0) devs[k] = j.device;
-    } catch (e){ showError('Home Assistant: ' + (e.message || e)); }
-    touchedAt = 0; render();
+      if (j.device){ const k = devs.findIndex(d => d.id === id); if (k >= 0) devs[k] = j.device; }
+    } catch (e){ if (!quick) showError('Home Assistant: ' + (e.message || e)); }
+    if (!quick){ touchedAt = 0; render(); }
   }
+
+  /* While a slider moves, its level goes out at most every SEND_MS, only when
+     it changed, one request at a time (the newest level wins); letting go
+     sends the last one and reads the device back. */
+  const SEND_MS = 200;
+  function sender(id, action){
+    let sent = null, want = null, busy = false, last = 0, t = 0;
+    async function pump(){
+      clearTimeout(t);
+      if (busy || want === null || want === sent) return;
+      const wait = SEND_MS - (performance.now() - last);
+      if (wait > 0){ t = setTimeout(pump, wait); return; }
+      const v = want; busy = true; last = performance.now();
+      await set(id, v === 0 && action === 'brightness' ? 'off' : action, v, true);
+      sent = v; busy = false; pump();
+    }
+    return {
+      to(v){ want = v; pump(); },
+      async done(v){
+        clearTimeout(t);
+        while (busy) await new Promise(r => setTimeout(r, 30));
+        await set(id, v === 0 && action === 'brightness' ? 'off' : action, v, false);
+      }
+    };
+  }
+  function setLevel(el, p){
+    el.style.setProperty('--p', p + '%'); el.dataset.p = p; el.setAttribute('aria-valuenow', Math.round(p));
+    if (!el.classList.contains('vol')) el.classList.toggle('lit', p > 0);
+    const sub = el.closest('.hTile').querySelector('.tSub'); if (sub && el.dataset.a) sub.textContent = p > 0 || el.classList.contains('vol') ? pct(p) : 'Off';
+  }
+  // drag: relative, like the phone's (the level follows the finger from where it was); a tap switches
+  paneEl.addEventListener('pointerdown', e => {
+    const el = e.target.closest('.vs'); if (!el || el.classList.contains('off-line')) return;
+    e.preventDefault(); el.setPointerCapture(e.pointerId);
+    const id = el.closest('.hTile').dataset.id, d = devs.find(x => x.id === id);
+    dragging = { el, id, d, y:e.clientY, p0:+el.dataset.p, moved:false, t0:performance.now(), out: el.dataset.a ? sender(id, el.dataset.a) : null };
+    el.classList.add('dragging'); touchedAt = performance.now();
+  });
+  paneEl.addEventListener('pointermove', e => {
+    const g = dragging; if (!g || !g.out) return;
+    const dy = g.y - e.clientY;
+    if (!g.moved && Math.abs(dy) < 6) return;
+    g.moved = true;
+    const p = Math.max(0, Math.min(100, Math.round(g.p0 + dy / g.el.clientHeight * 100)));
+    if (p === +g.el.dataset.p) return;
+    setLevel(g.el, p); g.out.to(p); touchedAt = performance.now();
+  });
+  const release = async () => {
+    const g = dragging; if (!g) return;
+    dragging = null; g.el.classList.remove('dragging');
+    if (g.moved && g.out){ await g.out.done(+g.el.dataset.p); return; }
+    // a tap: lights, switches and fans go on or off; a speaker plays or pauses
+    if (g.d.domain === 'media_player') return set(g.id, 'play_pause');
+    if (g.d.domain === 'cover') return set(g.id, isOn(g.d) ? 'close' : 'open');
+    set(g.id, isOn(g.d) ? 'off' : 'on');
+  };
+  paneEl.addEventListener('pointerup', release);
+  paneEl.addEventListener('pointercancel', release);
+  // keyboard: arrows step the level, Enter or space switches
+  paneEl.addEventListener('keydown', e => {
+    const el = e.target.closest('.vs'); if (!el) return;
+    const id = el.closest('.hTile').dataset.id, d = devs.find(x => x.id === id);
+    const step = { ArrowUp:5, ArrowRight:5, ArrowDown:-5, ArrowLeft:-5 }[e.key];
+    if (step && el.dataset.a){ e.preventDefault(); const p = Math.max(0, Math.min(100, +el.dataset.p + step)); setLevel(el, p);
+      set(id, p === 0 && el.dataset.a === 'brightness' ? 'off' : el.dataset.a, p); }
+    else if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); set(id, d.domain === 'media_player' ? 'play_pause' : isOn(d) ? 'off' : 'on'); }
+  });
   paneEl.addEventListener('click', e => {
     const b = e.target.closest('button[data-a]'); if (!b) return;
-    const id = b.closest('.hDev').dataset.id;
-    set(id, b.dataset.a, b.dataset.v != null ? +b.dataset.v : undefined);
+    set(b.closest('.hTile').dataset.id, b.dataset.a, b.dataset.v != null ? +b.dataset.v : undefined);
   });
-  paneEl.addEventListener('input', e => {
-    if (e.target.type !== 'range') return;
-    touchedAt = performance.now();
-    e.target.style.setProperty('--p', e.target.value + '%');
-    const v = e.target.closest('.hWide')?.querySelector('.hVal'); if (v) v.textContent = pct(+e.target.value);
-  });
-  paneEl.addEventListener('change', e => {
-    if (e.target.type !== 'range') return;
-    set(e.target.closest('.hDev').dataset.id, e.target.dataset.a, +e.target.value);
-  });
-  ['pointerdown', 'touchstart'].forEach(ev => paneEl.addEventListener(ev, () => { touchedAt = performance.now(); }, { passive:true }));
 
   async function run(name, args){
     if (name === 'home_panel'){
