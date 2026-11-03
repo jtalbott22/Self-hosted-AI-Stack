@@ -4,7 +4,7 @@ A practical, local-first AI workstation built around **Open WebUI + llama.cpp**,
 
 The goal of this repository is not to provide a generic cloud AI server. It is a reproducible example of how to assemble a capable private AI environment on a single NVIDIA-equipped workstation.
 
-![Open WebUI chat interface](docs/screenshots/chat-home.png)
+<a href="docs/screenshots/chat-home.png"><img src="docs/screenshots/chat-home.png" alt="Open WebUI chat interface" width="280"></a>
 
 ## What it provides
 
@@ -260,7 +260,7 @@ Open WebUI reaches llama.cpp as an OpenAI-compatible connection (**Admin Panel �
 URL: http://llama:8000/v1
 ```
 
-![Open WebUI Connections settings](docs/screenshots/connections.png)
+<a href="docs/screenshots/connections.png"><img src="docs/screenshots/connections.png" alt="Open WebUI Connections settings" width="280"></a>
 
 No API key is required for this internal connection. The built-in OpenAI API toggle can stay on with no key set if you don't also want a real OpenAI account wired in.
 
@@ -278,7 +278,7 @@ docker compose logs llama
 
 Configured models show up under **Admin Panel → Models**:
 
-![Models configured in Open WebUI](docs/screenshots/models.png)
+<a href="docs/screenshots/models.png"><img src="docs/screenshots/models.png" alt="Models configured in Open WebUI" width="280"></a>
 
 ## Open Terminal
 
@@ -377,8 +377,8 @@ If web search returns nothing, verify that SearXNG has JSON enabled.
 
 **Admin Panel → Web Search**
 
-![Web Search settings](docs/screenshots/web-search-general.png)
-![Web Search loader settings](docs/screenshots/web-search-loader.png)
+<a href="docs/screenshots/web-search-general.png"><img src="docs/screenshots/web-search-general.png" alt="Web Search settings" width="280"></a>
+<a href="docs/screenshots/web-search-loader.png"><img src="docs/screenshots/web-search-loader.png" alt="Web Search loader settings" width="280"></a>
 
 | Setting | Value |
 |---|---|
@@ -407,8 +407,8 @@ Embedding and reranking models are downloaded when first needed.
 
 **Admin Panel → Documents**
 
-![Documents embedding and retrieval settings](docs/screenshots/documents-embedding-rag.png)
-![Documents content extraction settings](docs/screenshots/documents-extraction.png)
+<a href="docs/screenshots/documents-embedding-rag.png"><img src="docs/screenshots/documents-embedding-rag.png" alt="Documents embedding and retrieval settings" width="280"></a>
+<a href="docs/screenshots/documents-extraction.png"><img src="docs/screenshots/documents-extraction.png" alt="Documents content extraction settings" width="280"></a>
 
 | Setting | Value |
 |---|---|
@@ -448,7 +448,7 @@ http://localhost:8188
 
 **Admin Panel → Images → Create Image**
 
-![Image generation settings](docs/screenshots/image-generation.png)
+<a href="docs/screenshots/image-generation.png"><img src="docs/screenshots/image-generation.png" alt="Image generation settings" width="280"></a>
 
 | Setting | Value |
 |---|---|
@@ -462,7 +462,7 @@ http://localhost:8188
 
 Open WebUI can also route image *edits* through a separate ComfyUI workflow (**Admin Panel → Images → Edit Image**), pointed at the same `http://comfyui:8188` base URL. After uploading your workflow as API-format JSON under **ComfyUI Workflow**, map the workflow's node IDs to the fields Open WebUI needs to fill in, e.g.:
 
-![Image editing workflow settings](docs/screenshots/image-editing.png)
+<a href="docs/screenshots/image-editing.png"><img src="docs/screenshots/image-editing.png" alt="Image editing workflow settings" width="280"></a>
 
 | Field | Workflow input | Node ID |
 |---|---|---|
@@ -498,7 +498,7 @@ Open WebUI has two places that point at Jupyter and both need the same URL and t
 
 **Admin Panel → Code Execution**
 
-![Code execution and interpreter settings](docs/screenshots/code-execution.png)
+<a href="docs/screenshots/code-execution.png"><img src="docs/screenshots/code-execution.png" alt="Code execution and interpreter settings" width="280"></a>
 
 | Setting | Value |
 |---|---|
@@ -513,7 +513,7 @@ Open WebUI has two places that point at Jupyter and both need the same URL and t
 
 Open WebUI talks to Kokoro through the OpenAI-compatible TTS API:
 
-![Audio / text-to-speech settings](docs/screenshots/text-to-speech.png)
+<a href="docs/screenshots/text-to-speech.png"><img src="docs/screenshots/text-to-speech.png" alt="Audio / text-to-speech settings" width="280"></a>
 
 | Setting | Value |
 |---|---|
@@ -658,11 +658,11 @@ The `DISK_PATHS` environment variable controls the labels shown by Sparkboard.
 
 ### What it reports
 
-![Sparkboard host and GPU overview](docs/screenshots/sparkboard-overview.png)
+<a href="docs/screenshots/sparkboard-overview.png"><img src="docs/screenshots/sparkboard-overview.png" alt="Sparkboard host and GPU overview" width="280"></a>
 
 For each container, Sparkboard tracks CPU %, memory (absolute and % of host), and published ports, for example:
 
-![Sparkboard storage and container list](docs/screenshots/sparkboard-containers.png)
+<a href="docs/screenshots/sparkboard-containers.png"><img src="docs/screenshots/sparkboard-containers.png" alt="Sparkboard storage and container list" width="280"></a>
 
 | Container | Published port |
 |---|---|
@@ -679,8 +679,8 @@ For each container, Sparkboard tracks CPU %, memory (absolute and % of host), an
 
 On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, power draw, and SM/memory clocks over time, plus a per-core CPU load breakdown and network/disk throughput history.
 
-![Sparkboard GPU metrics](docs/screenshots/sparkboard-gpu-metrics.png)
-![Sparkboard CPU, network, and disk load](docs/screenshots/sparkboard-system-load.png)
+<a href="docs/screenshots/sparkboard-gpu-metrics.png"><img src="docs/screenshots/sparkboard-gpu-metrics.png" alt="Sparkboard GPU metrics" width="280"></a>
+<a href="docs/screenshots/sparkboard-system-load.png"><img src="docs/screenshots/sparkboard-system-load.png" alt="Sparkboard CPU, network, and disk load" width="280"></a>
 
 ## Ports
 
