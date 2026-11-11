@@ -5048,15 +5048,20 @@ const home = (() => {
                            : `<span class="mVal">${known ? pct(d.volume) : 'Volume'}</span>`) +
           `<button class="mBtn" ${known ? `data-a="volume" data-v="${Math.min(100, d.volume + 5)}"` : 'data-a="volume_up"'} aria-label="Volume up">${mi('plus')}</button></div>` : '';
       body = `<div class="mGap"></div>${trans ? `<div class="mTrans">${trans}</div>` : ''}${vol}`;
-    } else if (!gone && can.has('on')){
-      body = `<div class="mGap"></div><button class="mBtn mBig" data-a="on" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>`;
+    } else if (!gone && (can.has('on') || can.has('off'))){
+      /* If the device advertised 'off' we can also turn it back on.  Many TVs
+         (Samsung, LG) omit the 'on' bit from supported_features even though
+         media_player.turn_on works fine on them.                                   */
+      const powAction = can.has('on') ? 'on' : 'off';
+      body = `<div class="mGap"></div><button class="mBtn mBig" data-a="${powAction}" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>`;
     } else if (gone && _mpCache.has(d.id)){
       /* HA just reported unavailable (e.g. right after turn-off); use the last
          known features so the "turn on" button stays visible.                  */
       const c = _mpCache.get(d.id);
       const can2 = new Set(c.can || []);
-      body = can2.has('on') ?
-        `<div class="mGap"></div><button class="mBtn mBig" data-a="on" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>` :
+      const powAction2 = can2.has('on') ? 'on' : can2.has('off') ? 'off' : null;
+      body = powAction2 ?
+        `<div class="mGap"></div><button class="mBtn mBig" data-a="${powAction2}" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>` :
         '<div class="mGap"></div>';
     } else {
       body = '<div class="mGap"></div>';
