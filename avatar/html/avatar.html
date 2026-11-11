@@ -4980,7 +4980,10 @@ const home = (() => {
     const path = what.ids && what.ids.length ? 'devices?ids=' + encodeURIComponent(what.ids.join(',')) : 'devices?q=' + encodeURIComponent(what.q || '');
     const r = await fetch(api(path), { cache:'no-store' });
     if (!r.ok) throw new Error('status ' + r.status);
-    devs = (await r.json()).devices || [];
+    const payload = (await r.json()).devices || [];
+    /* DEBUG: see what each device looks like after a fetch. */
+    for (const d of payload){ if (d.domain === 'media_player') console.log('[load]', d.id, 'state:', d.state, 'can:', JSON.stringify(d.can)); }
+    devs = payload;
     if (performance.now() - touchedAt > 1500) render();     // not while a slider is being dragged
     return devs;
   }
@@ -5017,7 +5020,15 @@ const home = (() => {
   // "solid" parts are filled shapes (play, pause, skip); the rest are lines
   const mi = k => `<svg viewBox="0 0 24 24">${MI[k].replace(/ class="s"/g, ' fill="currentColor" stroke="none"')}</svg>`;
   const shortName = n => n.replace(/\s*\([A-Z0-9-]{6,}\)\s*$/, '');   // "Samsung 8 Series (65) (UN65TU8000FXZA)": drop the model code
+  /* Last known good features per media-player entity.  HA can briefly report
+     an entity as unavailable right after a turn-off; this cache keeps the card
+     alive so the user can turn it back on without seeing a blank tile.        */
+  const _mpCache = new Map();   // id -> { can, tv, app, title }
   function mediaCard(d){
+    /* DEBUG: watch what HA sends for each media-player entity. */
+    console.log('[media]', d.id, 'state:', d.state, 'can:', JSON.stringify(d.can),
+                'on:', isOn(d), 'gone:', d.state === 'unavailable',
+                'cached:', _mpCache.has(d.id) ? 'yes' : 'no');
     const on = isOn(d), gone = d.state === 'unavailable', can = new Set(d.can || []), playing = d.state === 'playing';
     const state = gone ? 'Unavailable' : on ? d.state[0].toUpperCase() + d.state.slice(1) : 'Off';
     const sub = [state, d.app, d.title].filter(Boolean).join(' · ');
@@ -5039,7 +5050,21 @@ const home = (() => {
       body = `<div class="mGap"></div>${trans ? `<div class="mTrans">${trans}</div>` : ''}${vol}`;
     } else if (!gone && can.has('on')){
       body = `<div class="mGap"></div><button class="mBtn mBig" data-a="on" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>`;
-    } else body = '<div class="mGap"></div>';
+    } else if (gone && _mpCache.has(d.id)){
+      /* HA just reported unavailable (e.g. right after turn-off); use the last
+         known features so the "turn on" button stays visible.                  */
+      const c = _mpCache.get(d.id);
+      const can2 = new Set(c.can || []);
+      body = can2.has('on') ?
+        `<div class="mGap"></div><button class="mBtn mBig" data-a="on" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>` :
+        '<div class="mGap"></div>';
+    } else {
+      body = '<div class="mGap"></div>';
+    }
+    // Cache features whenever we see a real (non-unavailable) state.
+    if (!gone && (d.can?.length || can.size)){
+      _mpCache.set(d.id, { can: d.can, tv: d.tv, app: d.app, title: d.title });
+    }
     return `<div class="hTile media" data-id="${esc(d.id)}"><div class="mCard${on ? ' on' : ''}">` +
       `<div class="mHead">${mi(d.tv ? 'tv' : 'box')}${pow}</div><div class="mName">${esc(shortName(d.name))}</div>` +
       `<div class="mSub">${esc(sub)}</div>${body}</div></div>`;
@@ -5109,6 +5134,8 @@ const home = (() => {
     try {
       const r = await fetch(api('set'), { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ id, action, value, quick:!!quick }) });
       const j = await r.json().catch(() => ({}));
+      /* DEBUG: see what the backend returns after a set() call. */
+      console.log('[set]', { id, action, value, quick: !!quick, ok: j.ok, device: j.device });
       if (!r.ok || !j.ok) throw new Error(j.error || 'status ' + r.status);
       if (j.device){ const k = devs.findIndex(d => d.id === id); if (k >= 0) devs[k] = j.device; }
     } catch (e){ if (!quick) showError('Home Assistant: ' + (e.message || e)); }
