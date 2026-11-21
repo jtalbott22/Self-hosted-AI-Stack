@@ -1280,8 +1280,8 @@ function setSession(type){
 }
 const keepAlive = (() => {
   let el = null;
-  function silentWav(){
-    const n = 4000, b = new ArrayBuffer(44 + n), v = new DataView(b);
+  function silentWav(sec = 0.5){
+    const n = Math.ceil(8000 * sec), b = new ArrayBuffer(44 + n), v = new DataView(b);
     const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
     w(0,'RIFF'); v.setUint32(4, 36 + n, true); w(8,'WAVE'); w(12,'fmt ');
     v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
@@ -1290,11 +1290,35 @@ const keepAlive = (() => {
     for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
     return URL.createObjectURL(new Blob([b], { type:'audio/wav' }));
   }
-  let wav = null;
+  let wav = null, mirrorUrl = null, mirrorLen = 0;
   return {
     url(){ return wav || (wav = silentWav()); },
+    /* While a song plays: a silent track as long as the song, at the song's
+       position, playing or paused with it. Safari copies this element's time
+       into the lock screen, so it has to show the song's time, not a loop's. */
+    mirror(sec, t, playing, slack = 0.3){
+      if (!PERF.keep) return;
+      if (!el){ el = new Audio(this.url()); el.setAttribute('playsinline', ''); }
+      const len = Math.ceil(sec) + 2;
+      if (len !== mirrorLen){
+        const old = mirrorUrl;
+        mirrorUrl = silentWav(len); mirrorLen = len;
+        el.loop = false; el.src = mirrorUrl;
+        if (old) URL.revokeObjectURL(old);
+      }
+      if (Math.abs(el.currentTime - t) > slack){ try { el.currentTime = t; } catch {} }
+      if (playing){ if (el.paused) el.play().catch(() => {}); }
+      else if (!el.paused) el.pause();
+    },
+    unmirror(){                                         // back to the half-second loop
+      if (!mirrorUrl) return;
+      const old = mirrorUrl; mirrorUrl = null; mirrorLen = 0;
+      el.loop = true; el.src = this.url(); URL.revokeObjectURL(old);
+      this.start();
+    },
     start(){
       if (!PERF.keep){ if (el && !el.paused) el.pause(); return; }
+      if (mirrorUrl) return;                            // following a song: it plays and pauses with the song
       if (!el){ el = new Audio(this.url()); el.loop = true; el.setAttribute('playsinline', ''); }
       if (el.paused) el.play().catch(() => {});
     },
@@ -4569,6 +4593,18 @@ const music = (() => {
     } catch {}
   }
   ['loadedmetadata', 'durationchange', 'play', 'pause', 'seeked', 'ratechange', 'emptied'].forEach(ev => el.addEventListener(ev, syncPos));
+  /* The keep-alive mirrors a song's clock (see keepAlive.mirror). Live radio and
+     long podcasts keep the plain loop: a silent track that long costs too much
+     memory (8 KB a second). */
+  const MIRROR_MAX = 1200;
+  function follow(e){
+    const it = cur();
+    const d = isFinite(el.duration) && el.duration > 0 ? el.duration : (it && it.duration || 0);
+    if (!it || it.live || el.src === keepAlive.url() || !el.getAttribute('src') || !(d > 0) || d > MIRROR_MAX){ keepAlive.unmirror(); return; }
+    keepAlive.mirror(d, el.currentTime, !el.paused && !el.ended, e && e.type === 'timeupdate' ? 1 : 0.3);
+  }
+  ['playing', 'pause', 'seeked', 'loadedmetadata', 'durationchange', 'timeupdate', 'ended'].forEach(ev => el.addEventListener(ev, follow));
+  el.addEventListener('emptied', () => { if (!cur()) keepAlive.unmirror(); });
   $('musicPlay').onclick = () => { lipsync.unlock(); want ? pause() : resume(); };
   $('musicNext').onclick = () => { lipsync.unlock(); next(); };
   $('musicStop').onclick = () => stop();
