@@ -1290,15 +1290,19 @@ const keepAlive = (() => {
     for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
     return URL.createObjectURL(new Blob([b], { type:'audio/wav' }));
   }
-  let wav = null;
+  let wav = null, music = false;
   return {
     url(){ return wav || (wav = silentWav()); },
     start(){
-      if (!PERF.keep){ if (el && !el.paused) el.pause(); return; }
+      if (!PERF.keep || music){ if (el && !el.paused) el.pause(); return; }
       if (!el){ el = new Audio(this.url()); el.loop = true; el.setAttribute('playsinline', ''); }
       if (el.paused) el.play().catch(() => {});
     },
-    state(){ return !el ? 'none' : el.paused ? 'paused' : 'playing'; }
+    state(){ return !el ? 'none' : el.paused ? 'paused' : 'playing'; },
+    /* While music plays, its element keeps the session in "playback" by itself.
+       A second element looping half a second of silence next to it made the
+       lock screen's elapsed time snap back to 0:00 after a scrub. */
+    hold(on){ music = !!on; this.start(); }
   };
 })();
 
@@ -4077,6 +4081,9 @@ const music = (() => {
   el.addEventListener('waiting', () => { if (!el.paused) jank.waits++; });
   for (const ev of ['play', 'seeked', 'emptied']) el.addEventListener(ev, () => { jank.since = 0; });
   el.addEventListener('timeupdate', maybePrefetch);
+  // The keep-alive loop rests while a song plays, and comes back when it stops.
+  el.addEventListener('playing', () => { if (el.src !== keepAlive.url()) keepAlive.hold(true); });
+  ['pause', 'ended', 'error', 'emptied'].forEach(ev => el.addEventListener(ev, () => { if (el.paused || el.ended || el.error) keepAlive.hold(false); }));
   el.addEventListener('timeupdate', clock);
   el.addEventListener('durationchange', clock);
 
