@@ -412,7 +412,11 @@ services:
   # only the Google accounts listed in avatar/oauth2/allowed-emails.txt get in,
   # and that file is re-read when it changes. The LAN needs no sign-in.
   avatar-signin:
-    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    # Pinned: v7.15.6 (via :latest) hung refreshing a Google session at the
+    # token endpoint, so every signed-in request stalled until the browser gave
+    # up (nginx 499) and New chat / saved chats stopped working. Test a newer
+    # release with a long-lived session before moving this.
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.12.0
     container_name: avatar-signin
     command:
       - --provider=google
