@@ -1,2 +1,6 @@
 # Home Assistant keeps its configuration, database and secrets here.
 homeassistant/
+
+# nightly maintenance output
+ops/logs/
+ops/backups/

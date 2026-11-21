@@ -22,7 +22,7 @@ The goal of this repository is not to provide a generic cloud AI server. It is a
 | **Open Terminal** | Gives Open WebUI a shell and filesystem interface |
 | **GitLab MCP** | Lets the model work with issues, merge requests, repos, and pipelines on your GitLab |
 | **Sparkboard** *(optional)* | Local system, storage, container, and AI activity monitoring |
-| **Avatar** *(optional)* | Talking 3D head in the browser. Built on [LAM](https://github.com/aigc3d/LAM), it uses llama.cpp, Kokoro, Speaches and LAM Audio2Expression for lip-sync |
+| **Avatar** *(optional)* | Talking 3D head in the browser. Built on [LAM](https://github.com/aigc3d/LAM), it uses llama.cpp, Kokoro, ScribeCrate (speech-to-text) and LAM Audio2Expression for lip-sync |
 
 Everything runs through Docker Compose and communicates over the private Compose network unless a port is intentionally published.
 
@@ -553,7 +553,7 @@ The model writes all of the SVG itself, so output quality depends on the model. 
 
 `avatar/` is an optional browser app with a talking 3D head. The head is made from one photo with [LAM (Large Avatar Model)](https://github.com/aigc3d/LAM) from Alibaba's Tongyi Lab. The local LLM writes the reply, Kokoro speaks it, and [LAM_Audio2Expression](https://github.com/aigc3d/LAM_Audio2Expression) turns the audio into lip-sync in real time.
 
-The `avatar` service in `docker-compose.yaml` is an nginx container on port **8702**. It serves `avatar/html/` and proxies llama.cpp, Kokoro, Speaches, the Lens bridge and the Audio2Expression server under one origin, so the page needs no CORS setup. LAM and Audio2Expression themselves run in conda envs on the host, because they compile CUDA extensions against pinned PyTorch and CUDA versions.
+The `avatar` service in `docker-compose.yaml` is an nginx container on port **8702**. It serves `avatar/html/` and proxies llama.cpp, Kokoro, the stt service, the Lens bridge and the Audio2Expression server under one origin, so the page needs no CORS setup. LAM and Audio2Expression themselves run in conda envs on the host, because they compile CUDA extensions against pinned PyTorch and CUDA versions.
 
 Short version, once the conda setup is done:
 
@@ -594,6 +594,23 @@ These are from a phone. The page works the same on a phone as on a desktop brows
     <td valign="top"><b>Full screen.</b> Tap the artwork for a large player, with the source and a link to the original video.</td>
     <td valign="top"><b>Queue.</b> Related songs line up after the one you asked for. Tap any of them to jump to it.</td>
     <td valign="top"><b>Notebook tools in the Lens.</b> Results from Lens bridge tools open as their own tab, here a five-page weather briefing with a radar map, paged with the arrows or <b>Jump to…</b>. The music keeps playing in a mini player above the face.</td>
+  </tr>
+</table>
+
+#### A face made from a photo
+
+The same page with a head that the avatar maker built from a single photo (**Setup → New avatar from a photo**). These were captured with Playwright's WebKit (Safari's engine) at phone size, by typing the requests.
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/screenshots/avatar-face-talking.jpg" alt="Photo-made avatar speaking, with its answer in the conversation panel"></td>
+    <td width="33%"><img src="docs/screenshots/avatar-face-home-control.jpg" alt="Photo-made avatar after setting the basement game area lights to 40 percent, with the light slider in the Lens"></td>
+    <td width="33%"><img src="docs/screenshots/avatar-face-song.jpg" alt="Photo-made avatar playing Fly Me to the Moon, with synced lyrics in the Lens"></td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Talking.</b> <i>"Tell me what you can help me with around the house."</i> It answers out loud, lip-synced by Audio2Expression.</td>
+    <td valign="top"><b>Home control.</b> <i>"Set the basement game area lights to 40 percent."</i> Home Assistant dims the real lights, and the Lens opens a slider at 40%.</td>
+    <td valign="top"><b>A song.</b> <i>"Play Fly Me to the Moon by Frank Sinatra."</i> It plays with lyrics matched to the singing by the stt service.</td>
   </tr>
 </table>
 
@@ -663,18 +680,38 @@ On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, po
 <a href="docs/screenshots/sparkboard-gpu-metrics.png"><img src="docs/screenshots/sparkboard-gpu-metrics.png" alt="Sparkboard GPU metrics" width="280"></a>
 <a href="docs/screenshots/sparkboard-system-load.png"><img src="docs/screenshots/sparkboard-system-load.png" alt="Sparkboard CPU, network, and disk load" width="280"></a>
 
+## Speech-to-text
+
+The `stt` service is [ScribeCrate](https://github.com/hwdsl2/scribecrate) (`hwdsl2/whisper-server`), a faster-whisper server with the OpenAI `/v1/audio/transcriptions` API. Open WebUI's voice mode and dictation, the avatar page and the music service's lyric matching all share it. It takes WebM and M4A straight from browsers and phones, and returns word timestamps in `verbose_json`.
+
+It runs `small.en` on the CPU, which transcribes a spoken turn in under a second and leaves the GPU to llama.cpp and ComfyUI. To change the model, set `WHISPER_MODEL` (for example `large-v3-turbo`, preferably with the `:cuda` image). The server loads one model and ignores the `model` field in requests.
+
+Open WebUI stores audio settings in its database after the first boot. On an existing install, set them in **Admin Panel → Settings → Audio** as well:
+
+| Setting | Value |
+|---|---|
+| Speech-to-Text Engine | OpenAI |
+| API Base URL | `http://stt:8000/v1` |
+| API Key | `none` |
+| STT Model | `small.en` |
+
+> Earlier versions of this stack used [Speaches](https://github.com/speaches-ai/speaches), which hasn't published a release since v0.9.0-rc.3 (December 2025). On the same clips ScribeCrate was about twice as fast, with identical text and half the memory.
+
 ## Ports
 
 | Port | Service | Purpose |
 |---:|---|---|
 | 3000 | Open WebUI | Main interface |
-| 8000 | llama.cpp | OpenAI-compatible model API |
-| 8080 | SearXNG | Search interface |
+| 8000 | llama.cpp | OpenAI-compatible model API *(localhost)* |
+| 8080 | SearXNG | Search interface *(localhost)* |
+| 8090 | stt | Speech-to-text API *(localhost)* |
 | 8188 | ComfyUI | Image generation UI |
-| 8880 | Kokoro | TTS API |
-| 8888 | Jupyter | Notebook/code environment |
+| 8880 | Kokoro | TTS API *(localhost)* |
+| 8888 | Jupyter | Notebook/code environment *(localhost)* |
 | 8702 | Avatar | Avatar web app *(optional)* |
-| 9102 | Sparkboard | Monitoring dashboard |
+| 9102 | Sparkboard | Monitoring dashboard *(localhost)* |
+
+Ports marked *localhost* are bound to `127.0.0.1`. Containers reach each other over the Compose network, and a reverse proxy on the same machine can still use them, but nothing else on the LAN can. Remove the `127.0.0.1:` prefix to open one up.
 
 Playwright, Tika, PostgreSQL, Open Terminal, and GitLab MCP do not publish host ports.
 
@@ -693,17 +730,46 @@ Before exposing Open WebUI externally:
 - use HTTPS
 - use strong authentication
 - keep secrets out of Git
-- consider binding administrative services to localhost
+- keep administrative services bound to localhost (llama.cpp, Jupyter, SearXNG, Kokoro, stt and Sparkboard already are)
+- use a long random `LLAMA_API_KEY` and other secrets (`openssl rand -hex 24`), especially if a proxy publishes the llama.cpp API
 - understand what host directories are mounted into containers
 
 ## Updating
 
-Pull new images:
+Pull new images by hand:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
+
+### Nightly automatic updates
+
+`ops/` has an unattended nightly update. Set it up once:
+
+```bash
+sudo bash ops/install-maintenance.sh
+```
+
+Every day at 02:00 a systemd timer runs `ops/nightly-update.sh`, which:
+
+1. Backs up the Open WebUI Postgres database and Home Assistant's `/config` to `ops/backups/nightly/` (7 days kept)
+2. Upgrades the OS packages (`apt full-upgrade`, keeping your config files)
+3. Pulls newer images, rebuilds the local ones (`build --pull`), and recreates whatever changed
+4. Keeps Playwright's version in step with the one inside Open WebUI (`PLAYWRIGHT_VERSION` in `.env`)
+5. Prunes superseded images, and reboots if a package asks for it, but only between 01:00 and 05:59. If the PC was off at 02:00, it doesn't catch up later in the day.
+
+Logs go to `ops/logs/`, and `ops/logs/last-run.txt` lists any failures. Run it by hand with `sudo /usr/local/sbin/stack-nightly`, or with `sudo NO_REBOOT=1 /usr/local/sbin/stack-nightly` to skip the reboot. The installer also caps container logs at 3 × 50 MB, turns on Docker `live-restore` (a Docker upgrade no longer restarts every container) and sets `vm.swappiness=10`.
+
+Services with floating tags (`:latest`, `:main`, `:stable`) update every night. llama.cpp is the exception if you pin a build: pin it while a new release is untested with your model.
+
+**On WSL2**, a reboot stops the distro, and nothing starts it again by default. Run `ops/windows-setup.ps1` once in an administrator PowerShell, then let it ask for your Windows password:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ops\windows-setup.ps1 -Distro Ubuntu-24.04
+```
+
+It adds a `wsl-keepalive` task that starts the distro at boot and every 5 minutes if it isn't running. It also adds a `wsl-nightly-update` task at 03:30 (`wsl --update`, then a restart if WSL changed) and sets Windows Update's active hours to 08:00–23:00. Reboots from the Linux side stay off until it has run. Add `-NginxDir C:\nginx` to reload a Windows nginx at the same time.
 
 Your persistent application data is stored in named Docker volumes.
 
@@ -723,6 +789,7 @@ Back up important data before making major image or database-version changes.
 ├── notebooks/
 ├── searxng/
 ├── sparkboard/
+├── ops/                     nightly OS + image updates, backups, WSL watchdog
 └── avatar/
     ├── README.md            LAM / Audio2Expression install and hosting guide
     ├── nginx-avatar.conf    nginx config for the avatar container

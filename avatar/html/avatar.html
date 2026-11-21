@@ -212,7 +212,7 @@
   #homePane .tSub{font-size:12px;color:var(--dim);text-align:center;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-4px}
   /* the fat vertical slider: fills from the bottom; drag to set, tap to switch */
   #homePane .vs{position:relative;width:78px;height:156px;border-radius:24px;overflow:hidden;cursor:pointer;
-    background:#262e3a;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+    background:#262e3a;touch-action:pan-x;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
   #homePane .vs:focus-visible{outline:2px solid var(--live);outline-offset:3px}
   #homePane .vs .fill{position:absolute;left:0;right:0;bottom:0;height:var(--p,0%);background:#f3efe4;transition:height .12s ease-out}
@@ -4980,7 +4980,10 @@ const home = (() => {
     const path = what.ids && what.ids.length ? 'devices?ids=' + encodeURIComponent(what.ids.join(',')) : 'devices?q=' + encodeURIComponent(what.q || '');
     const r = await fetch(api(path), { cache:'no-store' });
     if (!r.ok) throw new Error('status ' + r.status);
-    devs = (await r.json()).devices || [];
+    const payload = (await r.json()).devices || [];
+    /* DEBUG: see what each device looks like after a fetch. */
+    for (const d of payload){ if (d.domain === 'media_player') console.log('[load]', d.id, 'state:', d.state, 'can:', JSON.stringify(d.can)); }
+    devs = payload;
     if (performance.now() - touchedAt > 1500) render();     // not while a slider is being dragged
     return devs;
   }
@@ -5017,7 +5020,15 @@ const home = (() => {
   // "solid" parts are filled shapes (play, pause, skip); the rest are lines
   const mi = k => `<svg viewBox="0 0 24 24">${MI[k].replace(/ class="s"/g, ' fill="currentColor" stroke="none"')}</svg>`;
   const shortName = n => n.replace(/\s*\([A-Z0-9-]{6,}\)\s*$/, '');   // "Samsung 8 Series (65) (UN65TU8000FXZA)": drop the model code
+  /* Last known good features per media-player entity.  HA can briefly report
+     an entity as unavailable right after a turn-off; this cache keeps the card
+     alive so the user can turn it back on without seeing a blank tile.        */
+  const _mpCache = new Map();   // id -> { can, tv, app, title }
   function mediaCard(d){
+    /* DEBUG: watch what HA sends for each media-player entity. */
+    console.log('[media]', d.id, 'state:', d.state, 'can:', JSON.stringify(d.can),
+                'on:', isOn(d), 'gone:', d.state === 'unavailable',
+                'cached:', _mpCache.has(d.id) ? 'yes' : 'no');
     const on = isOn(d), gone = d.state === 'unavailable', can = new Set(d.can || []), playing = d.state === 'playing';
     const state = gone ? 'Unavailable' : on ? d.state[0].toUpperCase() + d.state.slice(1) : 'Off';
     const sub = [state, d.app, d.title].filter(Boolean).join(' · ');
@@ -5037,9 +5048,28 @@ const home = (() => {
                            : `<span class="mVal">${known ? pct(d.volume) : 'Volume'}</span>`) +
           `<button class="mBtn" ${known ? `data-a="volume" data-v="${Math.min(100, d.volume + 5)}"` : 'data-a="volume_up"'} aria-label="Volume up">${mi('plus')}</button></div>` : '';
       body = `<div class="mGap"></div>${trans ? `<div class="mTrans">${trans}</div>` : ''}${vol}`;
-    } else if (!gone && can.has('on')){
-      body = `<div class="mGap"></div><button class="mBtn mBig" data-a="on" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>`;
-    } else body = '<div class="mGap"></div>';
+    } else if (!gone && (can.has('on') || can.has('off'))){
+      /* If the device advertised 'off' we can also turn it back on.  Many TVs
+         (Samsung, LG) omit the 'on' bit from supported_features even though
+         media_player.turn_on works fine on them.                                   */
+      const powAction = can.has('on') ? 'on' : 'off';
+      body = `<div class="mGap"></div><button class="mBtn mBig" data-a="${powAction}" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>`;
+    } else if (gone && _mpCache.has(d.id)){
+      /* HA just reported unavailable (e.g. right after turn-off); use the last
+         known features so the "turn on" button stays visible.                  */
+      const c = _mpCache.get(d.id);
+      const can2 = new Set(c.can || []);
+      const powAction2 = can2.has('on') ? 'on' : can2.has('off') ? 'off' : null;
+      body = powAction2 ?
+        `<div class="mGap"></div><button class="mBtn mBig" data-a="${powAction2}" aria-label="Turn on">${mi('power')}</button><div class="mGap"></div>` :
+        '<div class="mGap"></div>';
+    } else {
+      body = '<div class="mGap"></div>';
+    }
+    // Cache features whenever we see a real (non-unavailable) state.
+    if (!gone && (d.can?.length || can.size)){
+      _mpCache.set(d.id, { can: d.can, tv: d.tv, app: d.app, title: d.title });
+    }
     return `<div class="hTile media" data-id="${esc(d.id)}"><div class="mCard${on ? ' on' : ''}">` +
       `<div class="mHead">${mi(d.tv ? 'tv' : 'box')}${pow}</div><div class="mName">${esc(shortName(d.name))}</div>` +
       `<div class="mSub">${esc(sub)}</div>${body}</div></div>`;
@@ -5083,32 +5113,43 @@ const home = (() => {
     return `<div class="hTile${wide ? ' wide' : ''}" data-id="${esc(d.id)}">${body}<span class="tName">${esc(d.name)}</span>` +
       (sub ? `<span class="tSub">${esc(sub)}</span>` : '') + (btns ? `<div class="tBtns">${btns}</div>` : '') + '</div>';
   }
-  let dragging = null, room = null;
+  let dragging = null, room = null, jumpAt = 0;            // jumpAt: a chip's smooth scroll is under way
   function render(){
     if (dragging) return;                                   // never redraw under a finger
     if (!devs.length){ paneEl.innerHTML = '<p class="hEmpty" style="padding:18px 16px">No matching devices.</p>'; return; }
     const groups = what.ids && what.ids.length ? [['', devs]] : [...devs.reduce((m, d) => m.set(d.area, [...(m.get(d.area) || []), d]), new Map())]
       .sort(([a], [b]) => !a - !b || a.localeCompare(b));      // rooms by name; devices with no room last
     if (!groups.some(([a]) => a === room)) room = groups[0][0];
-    const ds = groups.find(([a]) => a === room)[1];
+    // Every room's devices in one row, room after room, so a swipe reaches all
+    // of them; the chips jump to a room and light up as its devices scroll by.
     const keep = paneEl.querySelector('.hRow')?.scrollLeft || 0, keepRooms = paneEl.querySelector('.hRooms')?.scrollLeft || 0;
     paneEl.innerHTML = (groups.length > 1 ? '<div class="hRooms" role="tablist">' + groups.map(([a]) =>
         `<button class="hRoom${a === room ? ' on' : ''}" role="tab" aria-selected="${a === room}" data-room="${esc(a)}">${esc(a || 'Other')}</button>`).join('') + '</div>' : '') +
-      '<div class="hRow">' + ds.map(tile).join('') + '</div>';
+      '<div class="hRow">' + groups.map(([a, ds]) => ds.map(d => tile(d).replace('<div class="hTile', `<div data-room="${esc(a)}" class="hTile`)).join('')).join('') + '</div>';
     const row = paneEl.querySelector('.hRow'); if (row) row.scrollLeft = keep;
-    const bar = paneEl.querySelector('.hRooms'), chip = bar?.querySelector('.on');
-    if (bar){                                               // keep the chosen room's chip in view, scrolling only the chip row
-      bar.scrollLeft = keepRooms;
-      const l = chip.offsetLeft - bar.offsetLeft, r = l + chip.offsetWidth;
-      if (l < bar.scrollLeft + 14) bar.scrollLeft = l - 14;
-      else if (r > bar.scrollLeft + bar.clientWidth - 14) bar.scrollLeft = r - bar.clientWidth + 14;
-    }
+    const bar = paneEl.querySelector('.hRooms');
+    if (bar){ bar.scrollLeft = keepRooms; markRoom(room); }
+    if (row && bar) row.addEventListener('scroll', () => {   // the chip follows the row
+      const x = row.scrollLeft + 24, t = [...row.querySelectorAll('.hTile')].find(t => t.offsetLeft - row.offsetLeft + t.offsetWidth > x);
+      if (t && t.dataset.room !== room && performance.now() - jumpAt > 900){ room = t.dataset.room; markRoom(room); }
+    }, { passive:true });
+  }
+  function markRoom(a){                                     // light the room's chip and keep it in view, scrolling only the chip row
+    const bar = paneEl.querySelector('.hRooms'); if (!bar) return;
+    let chip = null;
+    for (const c of bar.querySelectorAll('.hRoom')){ const on = c.dataset.room === a; c.classList.toggle('on', on); c.setAttribute('aria-selected', on); if (on) chip = c; }
+    if (!chip) return;
+    const l = chip.offsetLeft - bar.offsetLeft, r = l + chip.offsetWidth;
+    if (l < bar.scrollLeft + 14) bar.scrollLeft = l - 14;
+    else if (r > bar.scrollLeft + bar.clientWidth - 14) bar.scrollLeft = r - bar.clientWidth + 14;
   }
   async function set(id, action, value, quick){
     if (!quick) touchedAt = performance.now();
     try {
       const r = await fetch(api('set'), { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ id, action, value, quick:!!quick }) });
       const j = await r.json().catch(() => ({}));
+      /* DEBUG: see what the backend returns after a set() call. */
+      console.log('[set]', { id, action, value, quick: !!quick, ok: j.ok, device: j.device });
       if (!r.ok || !j.ok) throw new Error(j.error || 'status ' + r.status);
       if (j.device){ const k = devs.findIndex(d => d.id === id); if (k >= 0) devs[k] = j.device; }
     } catch (e){ if (!quick) showError('Home Assistant: ' + (e.message || e)); }
@@ -5149,22 +5190,31 @@ const home = (() => {
     const el = e.target.closest('.vs'); if (!el || el.classList.contains('off-line')) return;
     e.preventDefault(); el.setPointerCapture(e.pointerId);
     const id = el.closest('.hTile').dataset.id, d = devs.find(x => x.id === id);
-    dragging = { el, id, d, y:e.clientY, p0:+el.dataset.p, moved:false, t0:performance.now(), out: el.dataset.a ? sender(id, el.dataset.a) : null };
+    const row = el.closest('.hRow');
+    dragging = { el, id, d, x:e.clientX, y:e.clientY, row, sl0: row ? row.scrollLeft : 0, p0:+el.dataset.p, moved:false, scrolling:false,
+                 t0:performance.now(), out: el.dataset.a ? sender(id, el.dataset.a) : null };
     el.classList.add('dragging'); touchedAt = performance.now();
   });
   paneEl.addEventListener('pointermove', e => {
-    const g = dragging; if (!g || !g.out) return;
-    const dy = g.y - e.clientY;
+    const g = dragging; if (!g) return;
+    const dy = g.y - e.clientY, dx = e.clientX - g.x;
+    // Sideways first means scroll the row, not change the level. A finger's pan
+    // is the browser's (touch-action: pan-x, then pointercancel); a mouse's is ours.
+    if (!g.moved && !g.scrolling && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) g.scrolling = true;
+    if (g.scrolling){ if (g.row) g.row.scrollLeft = g.sl0 - dx; return; }
+    if (!g.out) return;
     if (!g.moved && Math.abs(dy) < 6) return;
     g.moved = true;
     const p = Math.max(0, Math.min(100, Math.round(g.p0 + dy / g.el.clientHeight * 100)));
     if (p === +g.el.dataset.p) return;
     setLevel(g.el, p); g.out.to(p); touchedAt = performance.now();
   });
-  const release = async () => {
+  const release = async e => {
     const g = dragging; if (!g) return;
     dragging = null; g.el.classList.remove('dragging');
     if (g.moved && g.out){ await g.out.done(+g.el.dataset.p); return; }
+    // the browser took the touch over to scroll, or it was a sideways drag: not a tap
+    if (g.scrolling || (e && e.type === 'pointercancel')) return render();
     // a tap: lights, switches and fans go on or off; a speaker plays or pauses
     if (g.d.domain === 'media_player') return set(g.id, 'play_pause');
     if (g.d.domain === 'cover') return set(g.id, isOn(g.d) ? 'close' : 'open');
@@ -5183,7 +5233,12 @@ const home = (() => {
   });
   paneEl.addEventListener('click', e => {
     const rb = e.target.closest('.hRoom');
-    if (rb){ room = rb.dataset.room; const r = paneEl.querySelector('.hRow'); if (r) r.scrollLeft = 0; render(); return; }
+    if (rb){
+      room = rb.dataset.room; markRoom(room); jumpAt = performance.now();
+      const r = paneEl.querySelector('.hRow'), t = r && [...r.querySelectorAll('.hTile')].find(t => t.dataset.room === room);
+      if (t) r.scrollTo({ left: t.offsetLeft - r.offsetLeft - 14, behavior: 'smooth' });
+      return;
+    }
     const b = e.target.closest('button[data-a]'); if (!b) return;
     set(b.closest('.hTile').dataset.id, b.dataset.a, b.dataset.v != null ? +b.dataset.v : undefined);
   });

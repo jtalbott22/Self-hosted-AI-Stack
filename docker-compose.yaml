@@ -18,7 +18,7 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
     container_name: llama
     runtime: nvidia
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     environment:
       - LLAMA_API_KEY=${LLAMA_API_KEY:-}
     volumes:
@@ -69,7 +69,7 @@ services:
     build: ./sparkboard
     container_name: sparkboard
     runtime: nvidia
-    ports: ["9102:9102"]
+    ports: ["127.0.0.1:9102:9102"]
     pid: host
     cap_add: [SYS_PTRACE]
     environment:
@@ -126,9 +126,10 @@ services:
     # Keep this version aligned with the Playwright package expected by the
     # Open WebUI image. Check with:
     #   docker exec openwebui pip show playwright | grep Version
-    image: mcr.microsoft.com/playwright:v1.60.0-noble
+    # ops/nightly-update.sh keeps PLAYWRIGHT_VERSION in .env in step with it.
+    image: mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION:-1.60.0}-noble
     container_name: playwright
-    command: npx -y playwright@1.60.0 run-server --port 3000 --host 0.0.0.0
+    command: npx -y playwright@${PLAYWRIGHT_VERSION:-1.60.0} run-server --port 3000 --host 0.0.0.0
     # A real init as PID 1: npm doesn't reap the browsers' exited child
     # processes, which pile up as zombies (169 after a day of test runs).
     init: true
@@ -143,7 +144,7 @@ services:
     image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
     container_name: kokoro
     runtime: nvidia
-    ports: ["8880:8880"]
+    ports: ["127.0.0.1:8880:8880"]
     # Your own voice: the avatar page's Setup sends a recording to
     # /dev/tune, which learns a voice from it and saves it as
     # a_<name>_tuned. The volume keeps saved voices; on first start Docker
@@ -162,7 +163,7 @@ services:
   # Audio2Expression server under one origin.
   # See avatar/README.md. Remove this service if you don't use it.
   avatar:
-    image: nginx:1.27-alpine
+    image: nginx:stable-alpine
     container_name: avatar
     ports: ["8702:80"]
     volumes:
@@ -170,12 +171,37 @@ services:
       - ./avatar/nginx-avatar.conf:/etc/nginx/conf.d/default.conf:ro
     extra_hosts:
       # Audio2Expression (:8701) and the avatar maker (:8703) run in conda
-      # envs on the host; Speaches (:8090) and the Lens bridge (:8095) are
-      # reached through host ports.
+      # envs on the host; the Lens bridge (:8095) is reached through its
+      # host port. Speech-to-text is the stt service, over Compose's network.
       - "host.docker.internal:host-gateway"
     depends_on:
       kokoro:
         condition: service_started
+    restart: unless-stopped
+
+  # Speech-to-text: ScribeCrate (hwdsl2/whisper-server), a maintained
+  # faster-whisper server with the OpenAI /v1/audio/transcriptions API,
+  # word timestamps, and WebM/M4A input. Shared by Open WebUI (voice mode,
+  # dictation), the avatar page (nginx /stt/) and the music service.
+  # Replaces Speaches, which stopped releasing after v0.9.0-rc.3 (Dec 2025).
+  #
+  # CPU on purpose: small.en answers a spoken turn in under a second, and
+  # the GPU is left to llama and ComfyUI. For GPU use the :cuda tag, add
+  # `runtime: nvidia` and WHISPER_DEVICE=cuda. The server loads one model;
+  # the `model` field in requests is ignored. No API key, so keep the port
+  # on loopback and the nginx /stt/ location LAN-only.
+  stt:
+    image: hwdsl2/whisper-server:latest
+    container_name: stt
+    ports: ["127.0.0.1:8090:8000"]
+    environment:
+      - WHISPER_PORT=8000
+      - WHISPER_MODEL=small.en
+      - WHISPER_LANGUAGE=en
+      - WHISPER_THREADS=4          # leave the rest for llama's CPU-side experts
+      - WHISPER_API_KEY=
+    volumes:
+      - stt-data:/var/lib/whisper  # model cache
     restart: unless-stopped
 
   # Music for the avatar page: songs (YouTube via yt-dlp), live radio
@@ -191,10 +217,10 @@ services:
       - music-cache:/cache        # downloaded songs, capped at CACHE_GB
     environment:
       - CACHE_GB=2
-      # Speaches listens to each song so the lyrics line up with the singing
+      # The stt service listens to each song so the lyrics line up with the singing
       # (videos with a skit first run ahead of LRCLIB's timing). Leave it
       # out to use LRCLIB's timing as it is.
-      - STT_URL=http://host.docker.internal:8090/v1
+      - STT_URL=http://stt:8000/v1
       - STT_MODEL=Systran/faster-whisper-small.en
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -204,7 +230,7 @@ services:
   jupyter:
     image: quay.io/jupyter/scipy-notebook:latest
     container_name: jupyter
-    ports: ["8888:8888"]
+    ports: ["127.0.0.1:8888:8888"]
     volumes:
       - ./notebooks:/home/jovyan/work
     command: >
@@ -218,7 +244,7 @@ services:
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
     volumes:
       - ./searxng:/etc/searxng
     environment:
@@ -229,7 +255,7 @@ services:
   open-terminal:
     # This service gives Open WebUI a shell/filesystem. Treat it as a
     # trusted-user component; do not publish its API port.
-    image: ghcr.io/open-webui/open-terminal:0.12.3
+    image: ghcr.io/open-webui/open-terminal:latest
     container_name: open-terminal
     environment:
       - OPEN_TERMINAL_API_KEY=${OPEN_TERMINAL_API_KEY}
@@ -306,7 +332,14 @@ services:
       - AUDIO_TTS_MODEL=kokoro
       - AUDIO_TTS_VOICE=af_sky
       - AUDIO_TTS_SPLIT_ON=punctuation
-      - WHISPER_MODEL=base.en
+      # Speech in: the shared stt service instead of Open WebUI's built-in
+      # Whisper. Open WebUI saves audio settings to its database on first
+      # boot, so on an existing install set the same values in
+      # Admin Panel -> Settings -> Audio.
+      - AUDIO_STT_ENGINE=openai
+      - AUDIO_STT_OPENAI_API_BASE_URL=http://stt:8000/v1
+      - AUDIO_STT_OPENAI_API_KEY=none
+      - AUDIO_STT_MODEL=small.en
 
       # Images
       - ENABLE_IMAGE_GENERATION=true
@@ -379,7 +412,7 @@ services:
   # only the Google accounts listed in avatar/oauth2/allowed-emails.txt get in,
   # and that file is re-read when it changes. The LAN needs no sign-in.
   avatar-signin:
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.12.0
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
     container_name: avatar-signin
     command:
       - --provider=google
@@ -427,7 +460,7 @@ services:
   # networking). Its own page and login: http://<this machine>:8123.
   # The avatar talks to it through avatar-home, never directly.
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:2026.10.4
+    image: ghcr.io/home-assistant/home-assistant:stable
     container_name: homeassistant
     network_mode: host
     environment:
@@ -459,6 +492,7 @@ volumes:
   open-terminal:
   sparkboard-data:
   music-cache:
+  stt-data:
   kokoro-voices:
   authgate-data:
   chats-data:
