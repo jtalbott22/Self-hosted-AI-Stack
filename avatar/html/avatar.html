@@ -4536,7 +4536,28 @@ const music = (() => {
     on('stop', () => { report('remote-stop'); stop(); });
     on('nexttrack', () => next());
     on('previoustrack', () => { if (el.currentTime > 5) el.currentTime = 0; else next(-1); });
+    // Dragging the lock screen's (or the car's) progress bar. No seekforward or
+    // seekbackward: on iOS those swap the next and previous buttons for ±10 s.
+    on('seekto', d => {
+      const it = cur(); if (!it || it.live || d == null || !isFinite(d.seekTime)) return;
+      try { if (d.fastSeek && typeof el.fastSeek === 'function') el.fastSeek(d.seekTime); else el.currentTime = d.seekTime; } catch {}
+      report('remote-seek'); syncPos();
+    });
   }
+  /* The lock screen only draws a bar you can drag when the page says where the
+     song is: its length, the position and the speed, sent again whenever they
+     jump (play, pause, a seek, a new song). A live station has no position. */
+  function syncPos(){
+    if (!ms || typeof ms.setPositionState !== 'function') return;
+    const it = cur();
+    try {
+      if (!it || it.live || el.src === keepAlive.url()){ ms.setPositionState(); return; }
+      const d = isFinite(el.duration) && el.duration > 0 ? el.duration : (it.duration || 0);
+      if (!(d > 0)) return;
+      ms.setPositionState({ duration:d, position:Math.min(Math.max(0, el.currentTime || 0), d), playbackRate:el.playbackRate || 1 });
+    } catch {}
+  }
+  ['loadedmetadata', 'durationchange', 'play', 'pause', 'seeked', 'ratechange', 'emptied'].forEach(ev => el.addEventListener(ev, syncPos));
   $('musicPlay').onclick = () => { lipsync.unlock(); want ? pause() : resume(); };
   $('musicNext').onclick = () => { lipsync.unlock(); next(); };
   $('musicStop').onclick = () => stop();
