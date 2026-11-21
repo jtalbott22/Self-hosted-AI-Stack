@@ -347,7 +347,7 @@ Instead of a password, the public page can ask for a Google sign-in and let in o
 3. Copy `avatar/oauth2/allowed-emails.txt.example` to `allowed-emails.txt` and list the Google accounts, one per line. Edits take effect without a restart.
 4. `docker compose up -d avatar-signin`, then the nginx pieces in `avatar/nginx-google-signin.conf`, and reload nginx.
 
-A sign-in lasts 30 days from the last use, and is re-checked with Google hourly while in use. A home-screen copy of the page keeps its own cookies, so it asks once by itself. `/avatar/oauth2/sign_out` signs out; `docker logs -f avatar-signin` shows sign-ins and refused accounts. With no password left, authgate (below) has nothing to guard on that page.
+A sign-in lasts 30 days, then asks for Google again. It isn't refreshed with Google in between: oauth2-proxy's refresh runs inside the request ([oauth2-proxy#3586](https://github.com/oauth2-proxy/oauth2-proxy/issues/3586)), and on v7.15 it hung until the browser gave up, stalling every signed-in request. Removing an address from `allowed-emails.txt` still locks it out at once. A home-screen copy of the page keeps its own cookies, so it asks once by itself. `/avatar/oauth2/sign_out` signs out; `docker logs -f avatar-signin` shows sign-ins and refused accounts. With no password left, authgate (below) has nothing to guard on that page.
 
 ### Saved chats
 

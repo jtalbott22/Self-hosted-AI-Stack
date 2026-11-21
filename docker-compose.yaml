@@ -412,11 +412,12 @@ services:
   # only the Google accounts listed in avatar/oauth2/allowed-emails.txt get in,
   # and that file is re-read when it changes. The LAN needs no sign-in.
   avatar-signin:
-    # Pinned: v7.15.6 (via :latest) hung refreshing a Google session at the
-    # token endpoint, so every signed-in request stalled until the browser gave
-    # up (nginx 499) and New chat / saved chats stopped working. Test a newer
-    # release with a long-lived session before moving this.
-    image: quay.io/oauth2-proxy/oauth2-proxy:v7.12.0
+    # Floats with the nightly update. No --cookie-refresh: refreshing a Google
+    # session runs on the request (oauth2-proxy#3586), and on v7.15 it hung
+    # until the browser gave up, stalling every signed-in request (nginx 499).
+    # Without it oauth2-proxy never calls Google after sign-in; the cookie
+    # holds the session and allowed-emails.txt is still checked every request.
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
     container_name: avatar-signin
     command:
       - --provider=google
@@ -430,8 +431,7 @@ services:
       - --cookie-name=_avatar_auth
       - --cookie-secure=true
       - --cookie-samesite=lax
-      - --cookie-expire=720h          # stay signed in for 30 days of not using it
-      - --cookie-refresh=1h           # re-checks the Google account hourly while in use
+      - --cookie-expire=720h          # a sign-in lasts 30 days, then Google sign-in again
       - --request-logging=false       # nginx asks about every request; keep the log for sign-ins
       - --set-xauthrequest=true       # tells nginx who signed in (for saved chats)
     environment:
