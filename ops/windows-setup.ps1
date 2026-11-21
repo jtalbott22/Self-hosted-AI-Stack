@@ -61,10 +61,22 @@ Register-ScheduledTask -TaskName 'wsl-nightly-update' -Action $act -Trigger (New
     -Settings $set2 -User $cred.UserName -Password $pw -RunLevel Highest -Force | Out-Null
 Write-Host 'wsl-nightly-update: daily at 03:30'
 
-# 3 -- optional Windows nginx in front of the stack
+# 3 -- optional Windows nginx in front of the stack. An nginx started at boot
+#      runs as SYSTEM, and only SYSTEM may signal it (an admin gets "OpenEvent
+#      ... Access is denied"), so the reload runs as a SYSTEM task. Reload it
+#      any time later with:  schtasks /Run /TN nginx-reload
 if ($NginxDir -and (Test-Path "$NginxDir\nginx.exe")) {
     & "$NginxDir\nginx.exe" -p $NginxDir -t
-    if ($LASTEXITCODE -eq 0) { & "$NginxDir\nginx.exe" -p $NginxDir -s reload; Write-Host 'nginx reloaded' }
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'nginx config test failed; not reloading' }
+    else {
+        $ract = New-ScheduledTaskAction -Execute "$NginxDir\nginx.exe" -Argument "-p $NginxDir -s reload" -WorkingDirectory $NginxDir
+        Register-ScheduledTask -TaskName 'nginx-reload' -Action $ract -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+        $before = (Get-Process nginx -ErrorAction SilentlyContinue | Measure-Object StartTime -Maximum).Maximum
+        Start-ScheduledTask -TaskName 'nginx-reload'; Start-Sleep 4
+        $after = (Get-Process nginx -ErrorAction SilentlyContinue | Measure-Object StartTime -Maximum).Maximum
+        if ($after -gt $before) { Write-Host 'nginx reloaded (new workers started)' }
+        else { Write-Warning 'nginx did not reload; see C:\nginx\logs\error.log' }
+    }
 }
 
 # 4 -- allow reboots from the Linux nightly job
