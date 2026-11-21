@@ -13,7 +13,7 @@ It is built on **LAM (Large Avatar Model)** and its companion projects from Alib
    ├── llama/v1/chat/completions ──► llama.cpp        (llama:8000)  reply text
    ├── tts/v1/audio/speech ────────► Kokoro           (kokoro:8880) reply audio
    ├── a2e/a2e ────────────────────► Audio2Expression (host:8701)   audio → facial expression frames
-   ├── stt/v1/audio/transcriptions ► Speaches         (host:8090)   your voice → text
+   ├── stt/v1/audio/transcriptions ► stt (ScribeCrate) (stt:8000)   your voice → text
    ├── lens/tools, lens/call ──────► Lens bridge      (host:8095)   notebook tools for the LLM
    └── make/jobs ──────────────────► Avatar maker     (host:8703)   photo → new avatar (optional)
    │
@@ -29,14 +29,14 @@ There are three parts, plus an optional fourth:
 |---|---|---|
 | **LAM** | Host, conda env `lam` | Turns one photo into an animatable Gaussian head and exports a `.zip` bundle. Only needed when you make a new avatar. |
 | **LAM_Audio2Expression (A2E)** | Host, conda env `lam_a2e`, port 8701 | Turns speech audio into the facial expression frames that drive the head. Runs all the time. |
-| **Web app** | `avatar` container, port 8702 | Serves `avatar.html`, the renderer and the bundles, and proxies llama.cpp, Kokoro, Speaches, the Lens bridge, A2E and the avatar maker. |
+| **Web app** | `avatar` container, port 8702 | Serves `avatar.html`, the renderer and the bundles, and proxies llama.cpp, Kokoro, stt, the Lens bridge, A2E and the avatar maker. |
 | **Avatar maker** *(optional)* | Host, conda env `lam`, port 8703 | Lets you make a new avatar from Setup in the page: upload a photo, and LAM turns it into a bundle in about a minute. See [step 5](#5-make-avatars-from-the-page-optional). |
 
 LAM and A2E compile CUDA extensions against specific versions of PyTorch and CUDA, so they run in conda envs on the host, not in Compose.
 
 ## Requirements
 
-- The main stack running (`llama` and `kokoro` at least; `speaches` for voice input and `lens-bridge` for notebook tools).
+- The main stack running (`llama` and `kokoro` at least; `stt` for voice input and `lens-bridge` for notebook tools).
 - An NVIDIA GPU with CUDA 12.1 support. The steps below were done on WSL2 Ubuntu with an RTX 40-series card (`TORCH_CUDA_ARCH_LIST=8.9`). For a 30-series card use `8.6`. CUDA 12.1 does not support RTX 50-series (Blackwell) cards.
 - About 25 GB of free disk for the two conda envs, the model weights and Blender.
 
@@ -301,7 +301,7 @@ When the page is served over http or https, its defaults are paths **relative to
 | `tts/dev/captioned_speech`, `tts/dev/phonemize` | Kokoro, `kokoro:8880` | Word timings and phonemes for the built-in lip-sync |
 | `tts/dev/tune`, `tts/v1/audio/voices` | Kokoro, `kokoro:8880` | Your own voice, and the list of voices in Setup |
 | `a2e/a2e` | A2E on the host, `:8701` | Lip-sync model (lip-sync mode `a2e`, LAM avatars only) |
-| `stt/v1/audio/transcriptions` | Speaches on the host, `:8090` | Voice input |
+| `stt/v1/audio/transcriptions` | The `stt` service (ScribeCrate), host port `:8090` | Voice input |
 | `lens/tools`, `lens/call` | Lens bridge on the host, `:8095` | Notebook tools |
 | `make/jobs` | Avatar maker on the host, `:8703` | New avatar from a photo (step 5) |
 | `music/search`, `music/more/...`, `music/stream/...`, `music/prefetch/...`, `music/levels/...`, `music/lyrics/...`, `music/log` | Music service, `music:8000` | Songs, radio and podcasts, the songs that follow, the visualizer, lyrics, and playback reports (step 6) |
@@ -481,8 +481,8 @@ The model gets two tools, `play_music` and `music_control` (pause, resume, next,
   - For songs, the service looks the lyrics up on [LRCLIB](https://lrclib.net/), a free, open lyrics database with no key, most of it timed line by line (`music/lyrics/...`). The artist and song are worked out from the YouTube title. Of the matches, the one closest in length to the video wins, so the timing lines up.
   - Under the title, three lines scroll by with the one being sung lit up. The same line also shows on the small card.
   - Tap them, or **Lyrics**, for the whole song. Tap a line to play from there. **Sooner** and **Later** nudge the timing by half a second.
-  - **Matched to the singing.** LRCLIB's timing is for the record, so a video with a skit before the song (or a pause in the middle) runs ahead of it. With `STT_URL` set on the music service, Speaches listens to each song in 30-second pieces, and the lines are slipped to where the words are actually sung, including a second slip after a pause in the middle.
-    - The first lines move about 10 seconds in; a whole song takes about 45 seconds of Speaches' CPU. While it listens, the credit reads "matching to the singing…".
+  - **Matched to the singing.** LRCLIB's timing is for the record, so a video with a skit before the song (or a pause in the middle) runs ahead of it. With `STT_URL` set on the music service, the stt service listens to each song in 30-second pieces, and the lines are slipped to where the words are actually sung, including a second slip after a pause in the middle.
+    - The first lines move about 10 seconds in; a whole song takes about 45 seconds of stt's CPU. While it listens, the credit reads "matching to the singing…".
     - A song already on time stops after a few pieces. Results are kept with the lyrics, so a song is only heard once.
     - It needs some lines it can make out: very fast rap, screaming, heavy effects or non-English songs may keep LRCLIB's timing. `docker logs music | grep lyrics:` shows what it heard. Leave `STT_URL` out to turn it off.
   - Songs with untimed lyrics only show them under **Lyrics**. Lookups are cached in the `music-cache` volume.
