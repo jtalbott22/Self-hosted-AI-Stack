@@ -3801,6 +3801,7 @@ const music = (() => {
   for (const img of [$('musicArt'), $('mfArt'), $('mfGlow')]) img.addEventListener('error', () => artError(img));
   // colours come from whichever picture actually loaded (after any fallback)
   $('mfArt').addEventListener('load', () => readPalette($('mfArt').getAttribute('src')));
+  let msKey = '';                                       // the track the lock screen is showing
   function paint(){
     const it = cur();
     card.classList.toggle('on', !!it);
@@ -3835,11 +3836,20 @@ const music = (() => {
     const ms = navigator.mediaSession;
     if (ms){
       try {
-        ms.metadata = new MediaMetadata({ title: it.title, artist: it.subtitle || '',
-          album: { music:'YouTube', radio:'Live radio', podcast:'Podcast' }[it.kind] || '',
-          artwork: it.art ? [{ src: it.art, sizes:'512x512' }] : [] });
+        // Only for a new track: setting metadata resets the lock screen's elapsed
+        // time to 0:00, and paint() runs on every play and pause (iOS pauses and
+        // resumes around a scrub), which made a scrub look like a restart.
+        const key = [it.kind, it.title, it.subtitle, it.art].join('\n');
+        if (!ms.metadata || key !== msKey){
+          ms.metadata = new MediaMetadata({ title: it.title, artist: it.subtitle || '',
+            album: { music:'YouTube', radio:'Live radio', podcast:'Podcast' }[it.kind] || '',
+            artwork: it.art ? [{ src: it.art, sizes:'512x512' }] : [] });
+          msKey = key;
+          setTimeout(syncPos, 400);                     // iOS applies the new track a moment later
+        }
         ms.playbackState = want ? 'playing' : 'paused';
       } catch {}
+      syncPos();
     }
   }
 
@@ -4541,13 +4551,14 @@ const music = (() => {
     on('seekto', d => {
       const it = cur(); if (!it || it.live || d == null || !isFinite(d.seekTime)) return;
       try { if (d.fastSeek && typeof el.fastSeek === 'function') el.fastSeek(d.seekTime); else el.currentTime = d.seekTime; } catch {}
-      report('remote-seek'); syncPos();
+      report('remote-seek'); syncPos(); setTimeout(syncPos, 400);   // again once iOS has redrawn
     });
   }
   /* The lock screen only draws a bar you can drag when the page says where the
      song is: its length, the position and the speed, sent again whenever they
      jump (play, pause, a seek, a new song). A live station has no position. */
   function syncPos(){
+    const ms = navigator.mediaSession;
     if (!ms || typeof ms.setPositionState !== 'function') return;
     const it = cur();
     try {
