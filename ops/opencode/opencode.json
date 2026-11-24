@@ -1,0 +1,70 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "homelab": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Home llama.cpp",
+      "options": {
+        "baseURL": "https://your-host.example/llama/v1",
+        "apiKey": "{env:HOME_LLAMA_API_KEY}",
+        "timeout": 600000
+      },
+      "models": {
+        "qwen": {
+          "name": "Qwen3.6 35B-A3B (home)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": false,
+          "temperature": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 16384
+          }
+        }
+      }
+    },
+    "homelab-inkling": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Home llama.cpp (Inkling)",
+      "options": {
+        "baseURL": "https://your-host.example/inkling/v1",
+        "apiKey": "{env:HOME_LLAMA_API_KEY}",
+        "timeout": 600000
+      },
+      "models": {
+        "inkling": {
+          "name": "Inkling 2 Mini (home, test)",
+          "tool_call": true,
+          "attachment": true,
+          "reasoning": true,
+          "temperature": true,
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 131072,
+            "output": 8192
+          }
+        }
+      }
+    }
+  },
+  "model": "homelab/qwen",
+  "share": "disabled",
+  "autoupdate": true
+}

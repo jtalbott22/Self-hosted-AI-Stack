@@ -303,7 +303,7 @@ def collect_docker_api():
         return None
 
     try:
-        resp = client.get("/containers/json")
+        resp = client.get("/containers/json", params={"all": "true"})
         resp.raise_for_status()
         rows = resp.json()
     except Exception as exc:
@@ -334,7 +334,10 @@ def collect_docker_api():
     # second CPU reading, so serially this would cost a second per container
     # and overrun the sampling interval on a busy host. In parallel the whole
     # sweep costs about as much as the slowest single call.
-    ids = [(c, row.get("Id")) for c, row in zip(containers, rows)]
+    # Stopped containers are listed too (so the dashboard can offer Start),
+    # but only running ones have stats worth a second-long call.
+    ids = [(c, row.get("Id")) for c, row in zip(containers, rows)
+           if row.get("State") == "running"]
 
     def one(pair):
         container, cid = pair
@@ -349,7 +352,7 @@ def collect_docker_api():
 
     stats_error = None
     try:
-        with ThreadPoolExecutor(max_workers=min(8, len(ids))) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, min(8, len(ids)))) as pool:
             results = list(pool.map(one, ids))
     except Exception as exc:
         results = []
@@ -368,7 +371,7 @@ def collect_docker_api():
             "pids": (stats.get("pids_stats") or {}).get("current"),
         })
 
-    containers.sort(key=lambda c: c.get("mem_used") or 0, reverse=True)
+    containers.sort(key=lambda c: (c.get("state") != "running", -(c.get("mem_used") or 0)))
     out = {"available": True, "error": None, "containers": containers}
     if stats_error:
         out["stats_error"] = stats_error

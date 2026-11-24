@@ -157,6 +157,31 @@
   </div>
 </section>
 
+<section class="board" id="director" hidden>
+  <div class="board__head">
+    <h2 class="eyebrow">Models</h2>
+    <div class="board__tools">
+      <div class="toggle" id="dmode" role="group" aria-label="Director mode"></div>
+      <span class="board__meta" id="director-meta"></span>
+    </div>
+  </div>
+  <div class="dir">
+    <div class="dir__layout" id="director-layout"></div>
+    <div class="board__scroll">
+      <table class="dtable">
+        <thead>
+          <tr><th scope="col">Model</th><th scope="col">State</th>
+              <th scope="col" class="num">In flight</th>
+              <th scope="col" class="num">Last request</th>
+              <th scope="col" class="num hide-sm">Recent</th></tr>
+        </thead>
+        <tbody id="director-body"></tbody>
+      </table>
+    </div>
+    <ol class="dir__events" id="director-events"></ol>
+  </div>
+</section>
+
 <section class="board">
   <div class="board__head">
     <h2 class="eyebrow">Containers</h2>
@@ -172,10 +197,11 @@
             <th scope="col" class="num">CPU</th><th scope="col" class="num">Memory</th>
             <th scope="col">Ports</th>
             <th scope="col" class="num hide-sm">Net I/O</th>
-            <th scope="col" id="ctrend-head" class="hide-sm">Trend</th></tr>
+            <th scope="col" id="ctrend-head" class="hide-sm">Trend</th>
+            <th scope="col" class="num ctl">Control</th></tr>
       </thead>
       <tbody id="docker-body">
-        <tr class="dtable__empty"><td colspan="7">Looking for containers&hellip;</td></tr>
+        <tr class="dtable__empty"><td colspan="8">Looking for containers&hellip;</td></tr>
       </tbody>
     </table>
   </div>

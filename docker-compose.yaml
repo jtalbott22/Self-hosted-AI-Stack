@@ -12,6 +12,49 @@
 #
 # Sparkboard is optional. If you don't want it, remove the sparkboard service
 # and its sparkboard-data volume, and remove the sparkboard directory.
+#
+# The second model (Inkling 2 Mini) and the model variants are optional too:
+# they only matter if you turn on Sparkboard's model director. See the
+# README's "Model director" section.
+
+# Model variants for Sparkboard's model director. Each is the same model with
+# a different context size / GPU split. The director starts and stops them;
+# never run two of one model at once. Every Qwen variant takes the network
+# alias `llama` and host port 8000, every Inkling variant `llama-inkling` and
+# 8001, so clients reach whichever variant is up. Create them once with:
+#   docker compose --profile variants create llama-boost llama-long \
+#     llama-inkling-fast llama-inkling-64k llama-inkling-128k
+x-qwen-variant: &qwen-variant
+  profiles: ["variants"]
+  image: ghcr.io/ggml-org/llama.cpp:server-cuda
+  runtime: nvidia
+  ports: ["127.0.0.1:8000:8000"]
+  networks:
+    default:
+      aliases: [llama]
+  environment:
+    - LLAMA_API_KEY=${LLAMA_API_KEY:-}
+  volumes:
+    - ./models:/models
+  restart: "no"
+
+x-inkling-variant: &inkling-variant
+  profiles: ["variants"]
+  image: local/llama-inkling:cuda13.4.3
+  runtime: nvidia
+  ports: ["127.0.0.1:8001:8000"]
+  networks:
+    default:
+      aliases: [llama-inkling]
+  environment:
+    - LLAMA_API_KEY=${LLAMA_API_KEY:-}
+    - LD_LIBRARY_PATH=/app
+  volumes:
+    - ./opt/llama-unsloth-b12588:/app:ro
+    - ./models/inkling:/models:ro
+  working_dir: /app
+  entrypoint: ["/app/llama-server"]
+  restart: "no"
 
 services:
   llama:
@@ -46,6 +89,145 @@ services:
       --jinja --reasoning off
       --load-mode none
     restart: unless-stopped
+
+  # ----------------------------------------------------------------
+  # Optional second model: Inkling 2 Mini. It needs Unsloth's llama.cpp fork
+  # (b12588-mix-c0c3de8: looped layers + NVFP4 expert scales). There is no
+  # Docker image for it, so its prebuilt CUDA 13 bundle in ./opt runs inside
+  # a plain CUDA runtime image. Behind a profile, so a plain
+  # `docker compose up -d` (and the nightly update) leaves it alone; start it
+  # with `docker compose --profile inkling up -d llama-inkling`, after which
+  # the model director manages it. 32k at -ub 256 is what fits beside Qwen.
+  # Thinking can't be fully disabled; send
+  # chat_template_kwargs {"reasoning_effort": 0} for the minimum.
+  llama-inkling:
+    profiles: ["inkling"]
+    build: ./llama-inkling
+    image: local/llama-inkling:cuda13.4.3
+    container_name: llama-inkling
+    runtime: nvidia
+    ports: ["127.0.0.1:8001:8000"]
+    environment:
+      - LLAMA_API_KEY=${LLAMA_API_KEY:-}
+      - LD_LIBRARY_PATH=/app
+    volumes:
+      - ./opt/llama-unsloth-b12588:/app:ro
+      - ./models/inkling:/models:ro
+    working_dir: /app
+    entrypoint: ["/app/llama-server"]
+    command: >
+      -m /models/Inkling-2-Mini-UD-Q4_K_XL.gguf
+      --mmproj /models/mmproj-F16.gguf
+      --host 0.0.0.0 --port 8000 --alias inkling
+      -c 32768 -np 1
+      -ngl 99 --n-cpu-moe 999
+      -t 8 -tb 16
+      -b 1024 -ub 256
+      -fa on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --jinja
+      --temp 1.0 --top-p 1.0 --top-k 0 --min-p 0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    restart: "no"
+
+  # Variants (see x-qwen-variant above). VRAM figures were measured alone on
+  # a 12 GB RTX 4070; every layout leaves at least 1.2 GB free.
+  llama-boost:
+    <<: *qwen-variant
+    container_name: llama-boost
+    # Qwen alone: 10 expert layers on the GPU, ~41 tok/s, 10.9 GB.
+    command: >
+      -m /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+      --mmproj /models/mmproj-F16.gguf
+      --host 0.0.0.0 --port 8000 --alias qwen
+      -c 131072 -np 2 --kv-unified
+      -ngl 99 --n-cpu-moe 30
+      -t 8 -tb 16
+      -b 4096 -ub 2048
+      --cache-reuse 256
+      -fa on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --jinja --reasoning off
+      --load-mode none
+
+  llama-long:
+    <<: *qwen-variant
+    container_name: llama-long
+    # Qwen alone, 262k: 6 expert layers on the GPU, ~35 tok/s, 11.1 GB.
+    command: >
+      -m /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+      --mmproj /models/mmproj-F16.gguf
+      --host 0.0.0.0 --port 8000 --alias qwen
+      -c 262144 -np 2 --kv-unified
+      -ngl 99 --n-cpu-moe 34
+      -t 8 -tb 16
+      -b 4096 -ub 2048
+      --cache-reuse 256
+      -fa on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --jinja --reasoning off
+      --load-mode none
+
+  llama-inkling-fast:
+    <<: *inkling-variant
+    container_name: llama-inkling-fast
+    # Inkling alone, 32k, experts of looped layers 6-15 on the GPU: ~25 tok/s, 10.4 GB.
+    # Layers 6-17 run three times per token, so their experts pay off most.
+    # Single-quote -ot: compose drops backslashes inside double quotes.
+    command: >
+      -m /models/Inkling-2-Mini-UD-Q4_K_XL.gguf
+      --mmproj /models/mmproj-F16.gguf
+      --host 0.0.0.0 --port 8000 --alias inkling
+      -c 32768 -np 1
+      -ngl 99
+      -ot 'blk\.([6-9]|1[0-5])\.ffn_.*_exps\.=CUDA0,_exps\.=CPU'
+      -t 8 -tb 16
+      -b 1024 -ub 256
+      -fa on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --jinja
+      --temp 1.0 --top-p 1.0 --top-k 0 --min-p 0.0
+
+  llama-inkling-64k:
+    <<: *inkling-variant
+    container_name: llama-inkling-64k
+    # Inkling alone, 64k, experts 6-12 on the GPU: ~20 tok/s, 10.9 GB.
+    command: >
+      -m /models/Inkling-2-Mini-UD-Q4_K_XL.gguf
+      --mmproj /models/mmproj-F16.gguf
+      --host 0.0.0.0 --port 8000 --alias inkling
+      -c 65536 -np 1
+      -ngl 99
+      -ot 'blk\.([6-9]|1[0-2])\.ffn_.*_exps\.=CUDA0,_exps\.=CPU'
+      -t 8 -tb 16
+      -b 1024 -ub 256
+      -fa on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --jinja
+      --temp 1.0 --top-p 1.0 --top-k 0 --min-p 0.0
+
+  llama-inkling-128k:
+    <<: *inkling-variant
+    container_name: llama-inkling-128k
+    # Inkling alone, 128k, experts 6-7 on the GPU: ~13.5 tok/s, 10.6 GB.
+    command: >
+      -m /models/Inkling-2-Mini-UD-Q4_K_XL.gguf
+      --mmproj /models/mmproj-F16.gguf
+      --host 0.0.0.0 --port 8000 --alias inkling
+      -c 131072 -np 1
+      -ngl 99
+      -ot 'blk\.([6-7])\.ffn_.*_exps\.=CUDA0,_exps\.=CPU'
+      -t 8 -tb 16
+      -b 1024 -ub 256
+      -fa on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --jinja
+      --temp 1.0 --top-p 1.0 --top-k 0 --min-p 0.0
 
   comfyui:
     image: yanwk/comfyui-boot:cu128-slim
@@ -88,12 +270,22 @@ services:
       # - SPARKBOARD_VLLM_UPSTREAM=http://llama:8000
       # - SPARKBOARD_CLASSIFY_SAMPLE=0.5
       # - SPARKBOARD_CLASSIFY_CONCURRENCY=1
+      # Model director (README "Model director"): off unless you set
+      # SPARKBOARD_DIRECTOR=1. It needs llama-inkling and the variants above.
+      - DIRECTOR=${SPARKBOARD_DIRECTOR:-0}
+      - DIRECTOR_LLAMA_API_KEY=${LLAMA_API_KEY:-}
+      # Start/stop/restart buttons and mode changes. Unset = controls off.
+      - SPARKBOARD_CONTROL_KEY=${SPARKBOARD_CONTROL_KEY:-}
     volumes:
       - sparkboard-data:/data
       - /proc:/host/proc:ro
-      # Read-only Docker socket is enough for Sparkboard's container metrics.
-      # Note: Docker socket access is still security-sensitive.
+      # The Docker socket gives container metrics, and lets the director and
+      # the control buttons start and stop containers (":ro" on a socket
+      # doesn't limit the API). Docker socket access is security-sensitive.
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # The director holds both models loaded during the nightly update
+      # window, which is in local time.
+      - /etc/localtime:/etc/localtime:ro
       # Optional WSL Windows-volume monitoring. Remove these on native Linux.
       - /mnt/c:/host/disks/c:ro
       - /mnt/d:/host/disks/d:ro

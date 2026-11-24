@@ -37,7 +37,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from . import collector, config, services
+from . import collector, config, director, services
 from .proxy import ClassifyingProxy, ProxyConfig, PromptFeed
 from .store import Store
 
@@ -101,6 +101,10 @@ class State:
 STATE = State()
 STORE: Store | None = None
 PROXY: ClassifyingProxy | None = None
+DIRECTOR: "director.Director | None" = None
+# Start/stop/restart and director mode changes need this key (X-Control-Key).
+# Unset means the controls are off.
+CONTROL_KEY = os.environ.get("SPARKBOARD_CONTROL_KEY", "")
 FEED = PromptFeed()
 
 
@@ -180,7 +184,8 @@ def services_sampler(stop: threading.Event):
             if STORE:
                 STORE.insert_containers(
                     STATE.services_ts,
-                    (snapshot.get("docker") or {}).get("containers") or [],
+                    [c for c in (snapshot.get("docker") or {}).get("containers") or []
+                     if c.get("state") in ("running", "")],
                 )
         except Exception:
             log.exception("service inventory failed")
@@ -234,6 +239,12 @@ async def lifespan(app: FastAPI):
         if PROXY_TRANSPARENT:
             log.info("transparent mode: /v1 is a drop-in for vLLM at this port")
 
+    global DIRECTOR
+    if director.ENABLED:
+        DIRECTOR = director.Director()
+        DIRECTOR.start()
+        log.info("model director on")
+
     stop = threading.Event()
     threads = [
         threading.Thread(target=sampler, args=(stop,), daemon=True,
@@ -253,6 +264,8 @@ async def lifespan(app: FastAPI):
             t.join(timeout=5)
         if PROXY:
             await PROXY.aclose()
+        if DIRECTOR:
+            await DIRECTOR.aclose()
         if STORE:
             STORE.close()
 
@@ -385,6 +398,99 @@ if PROXY_ENABLED:
             # Forward with the /v1 prefix restored, since that's what the
             # OpenAI API paths carry and what vLLM expects upstream.
             return await PROXY.forward(request, f"v1/{path}")
+
+
+# ---------------------------------------------------------------- control
+
+def _control_ok(request: Request) -> bool:
+    import hmac
+    given = request.headers.get("x-control-key", "")
+    return bool(CONTROL_KEY) and hmac.compare_digest(given, CONTROL_KEY)
+
+
+def _denied():
+    msg = ("controls are off (set SPARKBOARD_CONTROL_KEY)" if not CONTROL_KEY
+           else "wrong or missing control key")
+    return JSONResponse({"error": msg}, status_code=403)
+
+
+_BG: set = set()     # keeps fire-and-forget tasks alive
+
+
+@app.post("/api/containers/{name}/{action}")
+async def api_container_action(name: str, action: str, request: Request):
+    if not _control_ok(request):
+        return _denied()
+    if action not in ("start", "stop", "restart"):
+        return JSONResponse({"error": "action must be start, stop or restart"}, status_code=400)
+    if name == "sparkboard" and action != "start":
+        # Stopping or restarting ourselves would cut this response off, so
+        # answer first and act a moment later. After a stop nothing here can
+        # start it again: `docker start sparkboard` from the CLI.
+        async def later():
+            await asyncio.sleep(1.0)
+            import httpx
+            async with httpx.AsyncClient(
+                    transport=httpx.AsyncHTTPTransport(uds=config.DOCKER_SOCK),
+                    base_url="http://docker", timeout=90) as c:
+                await c.post(f"/containers/sparkboard/{action}?t=10")
+        t = asyncio.get_running_loop().create_task(later())
+        _BG.add(t)
+        t.add_done_callback(_BG.discard)
+        return JSONResponse({"ok": True, "pending": True})
+    try:
+        if DIRECTOR and name in director.MANAGED:
+            await DIRECTOR.container_action(name, action)
+        else:
+            import httpx
+            async with httpx.AsyncClient(
+                    transport=httpx.AsyncHTTPTransport(uds=config.DOCKER_SOCK),
+                    base_url="http://docker", timeout=90) as c:
+                q = "?t=15" if action != "start" else ""
+                r = await c.post(f"/containers/{name}/{action}{q}")
+            if r.status_code not in (204, 304):
+                return JSONResponse({"error": r.text[:300]}, status_code=r.status_code)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)[:300]}, status_code=500)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/director")
+async def api_director():
+    if not DIRECTOR:
+        return JSONResponse({"enabled": False})
+    snap = DIRECTOR.snapshot()
+    snap["controls"] = bool(CONTROL_KEY)
+    return JSONResponse(snap)
+
+
+@app.post("/api/director/mode/{mode}")
+async def api_director_mode(mode: str, request: Request):
+    if not _control_ok(request):
+        return _denied()
+    if not DIRECTOR:
+        return JSONResponse({"error": "director is off"}, status_code=400)
+    try:
+        await DIRECTOR.set_mode(mode)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "mode": mode})
+
+
+@app.post("/api/control/check")
+async def api_control_check(request: Request):
+    return JSONResponse({"ok": True}) if _control_ok(request) else _denied()
+
+
+# The model front door: /llm/qwen/v1/... and /llm/inkling/v1/...
+@app.api_route("/llm/{model}/{path:path}",
+               methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+async def llm_route(model: str, path: str, request: Request):
+    if not DIRECTOR:
+        return JSONResponse({"error": "director is off"}, status_code=503)
+    return await DIRECTOR.forward(request, model, path)
 
 
 @app.get("/api/health")

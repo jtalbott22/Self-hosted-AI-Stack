@@ -11,6 +11,7 @@ The goal of this repository is not to provide a generic cloud AI server. It is a
 | Component | Purpose |
 |---|---|
 | **llama.cpp** | Runs a local GGUF language model with an OpenAI-compatible API |
+| **Inkling 2 Mini** *(optional)* | A second local model. Sparkboard's [model director](#model-director) shares the GPU between it and Qwen |
 | **Open WebUI** | Main chat interface and orchestration layer |
 | **PostgreSQL + pgvector** | Persistent application database and vector storage for RAG |
 | **SearXNG** | Self-hosted metasearch backend for web search |
@@ -21,7 +22,7 @@ The goal of this repository is not to provide a generic cloud AI server. It is a
 | **Kokoro** | Local text-to-speech |
 | **Open Terminal** | Gives Open WebUI a shell and filesystem interface |
 | **GitLab MCP** | Lets the model work with issues, merge requests, repos, and pipelines on your GitLab |
-| **Sparkboard** *(optional)* | Local system, storage, container, and AI activity monitoring |
+| **Sparkboard** *(optional)* | Local system, storage, container, and AI activity monitoring, container start/stop/restart, and the model director |
 | **Avatar** *(optional)* | Talking 3D head in the browser. Built on [LAM](https://github.com/aigc3d/LAM), it uses llama.cpp, Kokoro, ScribeCrate (speech-to-text) and LAM Audio2Expression for lip-sync |
 
 Everything runs through Docker Compose and communicates over the private Compose network unless a port is intentionally published.
@@ -182,6 +183,7 @@ Use separate values for:
 - `WEBUI_SECRET_KEY`
 - `JUPYTER_TOKEN`
 - `OPEN_TERMINAL_API_KEY`
+- `SPARKBOARD_CONTROL_KEY` *(optional: turns on Sparkboard's start/stop/restart buttons)*
 
 Never commit `.env`.
 
@@ -639,7 +641,7 @@ It listens on:
 http://localhost:9102
 ```
 
-Sparkboard uses host `/proc` and the Docker socket for monitoring. Docker socket access is security-sensitive even when mounted read-only, so do not expose Sparkboard directly to an untrusted network.
+Sparkboard uses host `/proc` and the Docker socket for monitoring. Docker socket access is security-sensitive even when mounted read-only (`:ro` doesn't limit the Docker API), so do not expose Sparkboard directly to an untrusted network. The container controls and the model director use the same socket.
 
 ### WSL storage monitoring
 
@@ -680,6 +682,112 @@ On an NVIDIA host it also shows GPU utilization, VRAM allocated, temperature, po
 <a href="docs/screenshots/sparkboard-gpu-metrics.png"><img src="docs/screenshots/sparkboard-gpu-metrics.png" alt="Sparkboard GPU metrics" width="280"></a>
 <a href="docs/screenshots/sparkboard-system-load.png"><img src="docs/screenshots/sparkboard-system-load.png" alt="Sparkboard CPU, network, and disk load" width="280"></a>
 
+### Container controls
+
+Every container in Sparkboard's list has **Restart** and **Stop** buttons, and a stopped container has **Start**. They are off until you set `SPARKBOARD_CONTROL_KEY` in `.env`. The browser asks for the key once and remembers it, and every action is a POST with an `X-Control-Key` header. Each confirm box says what you're about to lose: stopping Qwen, for example, lists the clients that lose their model.
+
+- **Sparkboard itself** can be restarted (back in about 20 seconds) or stopped. It answers the request first and acts a second later. After a stop, nothing on the page can start it again: run `docker start sparkboard`.
+- **Model containers** go through the model director (below). Stop *parks* a model until you press Start, so the director doesn't restart it.
+- The nightly update leaves stopped containers stopped (see [Nightly automatic updates](#nightly-automatic-updates)).
+
+## Model director
+
+The model director is an optional part of Sparkboard (`sparkboard/app/director.py`) that runs two local models on one 12 GB GPU. Qwen3.6 35B-A3B is the main model. Inkling 2 Mini is a second, optional one. The director decides which of them is loaded, with how much context and how much of the GPU, based on what you're asking for. Turn it on with `SPARKBOARD_DIRECTOR=1`.
+
+<a href="docs/screenshots/sparkboard-models.png"><img src="docs/screenshots/sparkboard-models.png" alt="Sparkboard Models panel: mode buttons, current layout, each model's state and context, and recent switches" width="280"></a>
+
+### Theory of operation
+
+**One front door.** Clients that want the director's help send requests to Sparkboard instead of to llama.cpp: `http://sparkboard:9102/llm/qwen/v1/...` and `/llm/inkling/v1/...`. A public nginx proxies `/llama/` and `/inkling/` there. For each request the director:
+
+1. Checks the llama.cpp API key itself, so a stranger's request can't trigger a model switch.
+2. Estimates the context the request needs: about 3.2 characters per token, with image data left out, plus up to 4k tokens for the answer.
+3. Picks a layout that has the model loaded with enough context. If that isn't the current layout, it switches first and **holds the request** until the new layout is healthy. The client sees a slow first token, not an error.
+4. Streams the reply straight through and records the request time, so it knows when each model is busy or idle.
+
+**Layouts.** A layout is a set of containers that fits the GPU together. Each one is a compose service with its own context and GPU split.
+
+| Layout | Containers | What you get | VRAM |
+|---|---|---|---|
+| Both loaded *(default)* | `llama` + `llama-inkling` | Qwen 131k at 28 tok/s, Inkling 32k at ~11.5 tok/s | 10.8 GB |
+| Qwen boost | `llama-boost` | Qwen 131k at 41 tok/s | 10.9 GB |
+| Qwen long | `llama-long` | Qwen 262k at ~35 tok/s | 11.1 GB |
+| Inkling boost | `llama-inkling-fast` | Inkling 32k at ~25 tok/s | 10.4 GB |
+| Inkling 64k | `llama-inkling-64k` | Inkling 64k at 20 tok/s | 10.9 GB |
+| Inkling 128k | `llama-inkling-128k` | Inkling 128k at 13.5 tok/s | 10.6 GB |
+
+*Measured on an RTX 4070 (12 GB) with 54 GB of RAM under WSL2.*
+
+Every Qwen variant takes the network alias `llama` and host port 8000, and every Inkling variant takes `llama-inkling` and 8001. Clients that talk to llama.cpp directly (Open WebUI, the avatar, Home Assistant) therefore reach whichever variant is up, without any change. They just see a short gap while a switch restarts the model.
+
+**When it switches.**
+
+- **Session boost.** When one model gets 2 requests within 3 minutes, and the other model has been quiet for 5 minutes, it gets its boost layout: the GPU to itself, with as many experts on the GPU as fit. The first request of a session is always answered at once in whatever layout is up. The switch happens *between* requests, when a restart costs the least, and a follow-up that arrives mid-switch waits at the front door.
+- **Bigger context.** A prompt that doesn't fit the current context moves the model to the smallest layout that fits it. Prompts are never shrunk to fit.
+- **Back to both loaded.** After a quiet spell the director returns to both loaded: 10 minutes for the Qwen layouts, 5 for the Inkling ones.
+- **Nothing cut off.** Before stopping a model, the director waits for its in-flight requests to finish, including generations from clients that bypass it. It sees those through llama.cpp's `/slots` endpoint.
+- **Yields to ComfyUI.** While ComfyUI has a queue, the director doesn't enter a layout that takes the whole GPU, and it leaves one it's already in.
+- **Nightly window.** Between 01:45 and 02:45 local time it holds both loaded, so the nightly `docker compose up -d` never fights a variant for port 8000.
+- **Fails safe.** If a layout doesn't come up healthy within 5 minutes, the director goes back to both loaded and stops switching for 30 minutes.
+- **Self-repair.** Every 10 seconds it compares the running containers with the current layout and fixes any difference. For example, it stops a variant someone started by hand.
+
+**Modes.** Buttons on the Models panel:
+
+| Mode | Effect |
+|---|---|
+| Auto | All of the above |
+| Both | Keep both loaded, with no boosts and no bigger contexts |
+| Qwen boost | Keep Qwen boosted. Inkling's requests still bring both back while they need it |
+| Inkling boost | Keep Inkling boosted (Qwen stopped) |
+
+**Parking.** Stopping a model from the containers list parks it. It stays off until you press Start, across restarts of Sparkboard. The remaining model rests in its boost layout instead of both loaded, and requests for the parked model get a "stopped" error.
+
+### What the measurements taught
+
+- **Measure each model alone.** Under WSL2, a GPU allocation that doesn't fit spills into Windows' shared GPU memory instead of failing. `nvidia-smi` then tops out around 11.7–11.9 GB on a 12 GB card, and speed becomes unpredictable: a spilled layout once ran at 2.5 tok/s. So every figure above was taken with one model loaded, and every layout leaves at least 1.2 GB free.
+- **An idle model costs nothing.** Qwen runs at the same speed whether or not Inkling is loaded beside it. A model is only stopped when its VRAM buys the other one speed or context.
+- **Offload the looped layers.** Inkling 2 Mini has 24 physical layers, but layers 6–17 run three times per token (`inkling2.num_loops` in the GGUF metadata). Putting *those* layers' experts on the GPU with `-ot 'blk\.(6|7|…)\.ffn_.*_exps\.=CUDA0,_exps\.=CPU'` took it from 12 to 26 tok/s. `--n-cpu-moe` offloads from the last layer backwards, and barely helps.
+- **Smaller micro-batches save VRAM.** `-ub 256` instead of `512` cuts Inkling's compute buffer by about 1.6 GB. That buys 32k of context beside Qwen, or more experts on the GPU, at a small cost in prompt-processing speed.
+
+### Set it up
+
+1. Download Unsloth's Inkling 2 Mini GGUF (`Inkling-2-Mini-UD-Q4_K_XL.gguf` and its `mmproj-F16.gguf`) into `models/inkling/`.
+2. Unpack the CUDA 13 build of Unsloth's llama.cpp fork (`b12588-mix-c0c3de8`) into `opt/llama-unsloth-b12588/`. Mainline llama.cpp doesn't run this model yet.
+3. Build and start Inkling, then create the variants:
+   ```bash
+   docker compose --profile inkling up -d --build llama-inkling
+   docker compose --profile variants create llama-boost llama-long \
+     llama-inkling-fast llama-inkling-64k llama-inkling-128k
+   ```
+4. Add to `.env`, then recreate Sparkboard with `docker compose up -d sparkboard`:
+   ```bash
+   SPARKBOARD_DIRECTOR=1
+   SPARKBOARD_CONTROL_KEY=<openssl rand -hex 16>
+   ```
+5. Point clients at the front door. For opencode, `ops/opencode/opencode.json` defines both models through a public nginx: replace `your-host.example`, copy the file to `~/.config/opencode/opencode.json` on each PC, and set `HOME_LLAMA_API_KEY` there to your `LLAMA_API_KEY`. The config has no `small_model`, so opencode's side requests (such as chat titles) go to the model you're using instead of knocking the other model out of its boost. The nginx routes look like this:
+   ```nginx
+   location /llama/   { proxy_pass http://127.0.0.1:9102/llm/qwen/;    proxy_buffering off; proxy_read_timeout 900s; }
+   location /inkling/ { proxy_pass http://127.0.0.1:9102/llm/inkling/; proxy_buffering off; proxy_read_timeout 900s; }
+   ```
+   To bypass the director, point the routes back at `127.0.0.1:8000/` and `127.0.0.1:8001/`.
+
+On a different GPU, re-measure each variant alone and adjust `-c`, `--n-cpu-moe`, `-ot` and `-ub` until each layout leaves 1 GB or more free. The layout table at the top of `director.py` holds the context sizes the director plans with.
+
+### Settings
+
+All are optional environment variables on the `sparkboard` service.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DIRECTOR` | `0` | `1` turns the director on (compose maps `SPARKBOARD_DIRECTOR` to it) |
+| `DIRECTOR_BOOST_AFTER` / `DIRECTOR_BOOST_WINDOW` | `2` / `180` | Requests within this many seconds that make a session |
+| `DIRECTOR_GRACE` | `300` | How long the other model must have been quiet, in seconds, before a boost |
+| `DIRECTOR_ALLOW_QWEN_STOP` | `1` | `0` forbids the Inkling-only layouts, so Qwen always stays up |
+| `DIRECTOR_QUIET` | `01:45-02:45` | Local time window held in both loaded |
+| `DIRECTOR_HEALTH_TIMEOUT` | `300` | Seconds a layout gets to come up healthy |
+| `DIRECTOR_COMFY_URL` | `http://comfyui:8188` | Where to check ComfyUI's queue |
+| `DIRECTOR_STATE` | `/data/director.json` | Mode and parked models, kept across restarts |
+
 ## Speech-to-text
 
 The `stt` service is [ScribeCrate](https://github.com/hwdsl2/scribecrate) (`hwdsl2/whisper-server`), a faster-whisper server with the OpenAI `/v1/audio/transcriptions` API. Open WebUI's voice mode and dictation, the avatar page and the music service's lyric matching all share it. It takes WebM and M4A straight from browsers and phones, and returns word timestamps in `verbose_json`.
@@ -703,6 +811,7 @@ Open WebUI stores audio settings in its database after the first boot. On an exi
 |---:|---|---|
 | 3000 | Open WebUI | Main interface |
 | 8000 | llama.cpp | OpenAI-compatible model API *(localhost)* |
+| 8001 | llama.cpp (Inkling) | Second model's API *(localhost, optional)* |
 | 8080 | SearXNG | Search interface *(localhost)* |
 | 8090 | stt | Speech-to-text API *(localhost)* |
 | 8188 | ComfyUI | Image generation UI |
@@ -755,7 +864,7 @@ Every day at 02:00 a systemd timer runs `ops/nightly-update.sh`, which:
 
 1. Backs up the Open WebUI Postgres database and Home Assistant's `/config` to `ops/backups/nightly/` (7 days kept)
 2. Upgrades the OS packages (`apt full-upgrade`, keeping your config files)
-3. Pulls newer images, rebuilds the local ones (`build --pull`), and recreates whatever changed
+3. Pulls newer images, rebuilds the local ones (`build --pull`), and recreates whatever changed. Only services that are running (or new in the compose file) are brought up. A container you stopped, or a model variant the director has stopped, stays stopped, and the log lists those containers as "Left stopped"
 4. Keeps Playwright's version in step with the one inside Open WebUI (`PLAYWRIGHT_VERSION` in `.env`)
 5. Prunes superseded images, and reboots if a package asks for it, but only between 01:00 and 05:59. If the PC was off at 02:00, it doesn't catch up later in the day.
 
@@ -788,8 +897,11 @@ Back up important data before making major image or database-version changes.
 ├── comfy-models/
 ├── notebooks/
 ├── searxng/
-├── sparkboard/
+├── sparkboard/              dashboard, container controls, model director (app/director.py)
+├── llama-inkling/           CUDA runtime image for the optional Inkling model
+├── opt/                     Unsloth's llama.cpp build for Inkling (not committed)
 ├── ops/                     nightly OS + image updates, backups, WSL watchdog
+│   └── opencode/            opencode client config for both models
 └── avatar/
     ├── README.md            LAM / Audio2Expression install and hosting guide
     ├── nginx-avatar.conf    nginx config for the avatar container

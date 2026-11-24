@@ -4,3 +4,6 @@ homeassistant/
 # nightly maintenance output
 ops/logs/
 ops/backups/
+
+# Unsloth llama.cpp build for Inkling (downloaded, not committed)
+opt/

@@ -641,7 +641,7 @@ function renderDocker(d) {
         + 'user to the docker group \u2014 see the README on what that grants.'
       : `Docker unavailable: ${esc(why)}`;
     meta.textContent = '';
-    body.innerHTML = `<tr class="dtable__empty"><td colspan="7" class="warn">${hint}</td></tr>`;
+    body.innerHTML = `<tr class="dtable__empty"><td colspan="8" class="warn">${hint}</td></tr>`;
     return;
   }
 
@@ -649,8 +649,8 @@ function renderDocker(d) {
   tickServicesAge();
 
   if (!cs.length) {
-    body.innerHTML = '<tr class="dtable__empty"><td colspan="7">'
-      + 'No containers are running.</td></tr>';
+    body.innerHTML = '<tr class="dtable__empty"><td colspan="8">'
+      + 'No containers found.</td></tr>';
     return;
   }
 
@@ -664,14 +664,16 @@ function renderDocker(d) {
     const net = (c.net_rx != null || c.net_tx != null)
       ? `${fmtBytes(c.net_rx, 1)} / ${fmtBytes(c.net_tx, 1)}`
       : '\u2014';
-    return `<tr>
-      <td class="key">${esc(c.name)}</td>
+    const running = !c.state || c.state === 'running';
+    return `<tr class="${running ? '' : 'is-stopped'}">
+      <td class="key">${esc(c.name)}${running ? '' : ` <span class="scope--local">${esc(c.state)}</span>`}</td>
       <td class="trunc hide-sm" title="${esc(c.image)}">${esc(c.image)}</td>
       <td class="num">${c.cpu != null ? `${c.cpu.toFixed(1)}%` : '\u2014'}</td>
       <td class="num">${mem}</td>
-      <td>${ports}</td>
+      <td>${running ? ports : ''}</td>
       <td class="num hide-sm">${net}</td>
-      <td class="trend hide-sm"><canvas id="ctr-${i}"></canvas></td>
+      <td class="trend hide-sm"><canvas id="ctr-${i}" width="120" height="22"></canvas></td>
+      <td class="num ctl">${controlButtons(c.name, running)}</td>
     </tr>`;
   }).join('');
 
@@ -680,12 +682,177 @@ function renderDocker(d) {
   requestAnimationFrame(() => drawRowTrends(cs));
 }
 
+// ------------------------------------------------------------- controls
+//
+// Start/stop/restart and the director's mode need the control key, asked for
+// once and kept in this browser only.
+
+const KEY_STORE = 'sparkboard.controlKey';
+function controlKey(ask) {
+  let k = '';
+  try { k = localStorage.getItem(KEY_STORE) || ''; } catch { /* private mode */ }
+  if (!k && ask) {
+    k = (window.prompt('Sparkboard control key (SPARKBOARD_CONTROL_KEY in ~/stack/.env):') || '').trim();
+    if (k) { try { localStorage.setItem(KEY_STORE, k); } catch { /* ignore */ } }
+  }
+  return k;
+}
+
+async function control(path) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const key = controlKey(true);
+    if (!key) return false;
+    const res = await fetch(path, { method: 'POST', headers: { 'X-Control-Key': key } });
+    if (res.status === 403) {
+      try { localStorage.removeItem(KEY_STORE); } catch { /* ignore */ }
+      if (attempt === 0) continue;
+    }
+    if (!res.ok) {
+      let msg = `${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch { /* not json */ }
+      window.alert(`Sparkboard: ${msg}`);
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function controlButtons(name, running) {
+  const n = esc(name);
+  const btn = (act, label, cls = '') =>
+    `<button class="cbtn ${cls}" type="button" data-name="${n}" data-act="${act}">${label}</button>`;
+  const both = `<span class="cbtns">${btn('restart', 'Restart')}${btn('stop', 'Stop', 'cbtn--stop')}</span>`;
+  const managed = state.director?.enabled && (state.director.managed || []).includes(name);
+  if (managed && !running) {
+    // Variants that aren't running are just not in the current layout. A
+    // model stopped by hand gets Start on its main container.
+    const model = name.startsWith('llama-inkling') ? 'inkling' : 'qwen';
+    if ((name === 'llama' || name === 'llama-inkling') && (state.director.parked || []).includes(model)) {
+      return `<span class="cbtns">${btn('start', 'Start')}</span>`;
+    }
+    return '<span class="scope--local" title="Started and stopped by the model director">director</span>';
+  }
+  if (!running) return `<span class="cbtns">${btn('start', 'Start')}</span>`;
+  return both;
+}
+
+// What each action costs, shown in the confirm box.
+function controlWarning(name, act) {
+  const managed = state.director?.enabled && (state.director.managed || []).includes(name);
+  const ink = name.startsWith('llama-inkling');
+  if (name === 'sparkboard') {
+    return act === 'stop'
+      ? 'Stop Sparkboard?\n\nThis page goes offline and nothing here can start it again: run\n  docker start sparkboard\nin the WSL terminal. While it is down, opencode on your other PCs can\'t reach the models (nginx routes through Sparkboard), and the director stops managing them.'
+      : 'Restart Sparkboard?\n\nThis page reconnects in about 20 seconds. Requests through the director (opencode) in that moment fail.';
+  }
+  if (managed && act === 'stop') {
+    return ink
+      ? 'Stop Inkling?\n\nIt stays off until you press Start on llama-inkling. Qwen gets the GPU (boost, 41 tok/s). Requests for Inkling get a "stopped" error.'
+      : 'Stop Qwen?\n\nIt stays off until you press Start on llama. Inkling gets the GPU (boost, ~25 tok/s). Open WebUI, the avatar, Home Assistant and opencode\'s Qwen lose their model.';
+  }
+  if (managed && act === 'restart') {
+    return `Restart ${name}?\n\nThe model reloads in 10-30 seconds; a reply in progress is cut off.`;
+  }
+  return `${act[0].toUpperCase() + act.slice(1)} ${name}?`;
+}
+
+function wireControls() {
+  $('docker-body')?.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('.cbtn');
+    if (!b) return;
+    const { name, act } = b.dataset;
+    if (act !== 'start' && !window.confirm(controlWarning(name, act))) return;
+    b.disabled = true;
+    b.textContent = '\u2026';
+    await control(`./api/containers/${encodeURIComponent(name)}/${act}`);
+    setTimeout(loadServices, 1500);
+    setTimeout(loadDirector, 1500);
+  });
+}
+
+// ------------------------------------------------------------- director
+
+const DMODES = [
+  { id: 'auto', label: 'Auto', title: 'Boost whichever model is in a session, grow context for big prompts, restore both when idle' },
+  { id: 'shared', label: 'Both', title: 'Keep both models loaded: Qwen 131k, Inkling 32k' },
+  { id: 'boost', label: 'Qwen boost', title: 'Keep Qwen boosted, Inkling parked' },
+  { id: 'inkboost', label: 'Inkling boost', title: 'Keep Inkling boosted; Qwen stopped, so Home Assistant has no model' },
+];
+
+function ago(s) {
+  if (s == null) return '\u2014';
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+}
+
+function renderDirector(d) {
+  const sec = $('director');
+  if (!sec) return;
+  state.director = d;
+  if (!d || !d.enabled) { sec.hidden = true; return; }
+  sec.hidden = false;
+
+  const host = $('dmode');
+  if (!host.children.length) {
+    for (const m of DMODES) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = m.label;
+      b.title = m.title;
+      b.dataset.mode = m.id;
+      b.addEventListener('click', async () => {
+        if (await control(`./api/director/mode/${m.id}`)) loadDirector();
+      });
+      host.appendChild(b);
+    }
+  }
+  for (const b of host.children) b.setAttribute('aria-pressed', String(b.dataset.mode === d.mode));
+
+  const sw = d.switching;
+  const bits = [
+    `<span>Layout <strong class="${sw ? 'state--switching' : ''}">${sw ? `switching to ${esc(d.switching_label)}\u2026` : esc(d.layout_label)}</strong></span>`,
+    `<span>${esc(d.layout_detail || '')}</span>`,
+  ];
+  if (d.quiet) bits.push(`<span class="scope--local">nightly window ${esc(d.quiet_window)}: holding both</span>`);
+  if (d.blocked_for) bits.push(`<span class="warn">switching paused ${Math.ceil(d.blocked_for / 60)} min after a failure</span>`);
+  if (!d.controls) bits.push('<span class="warn">controls off: SPARKBOARD_CONTROL_KEY unset</span>');
+  $('director-layout').innerHTML = bits.join('');
+
+  const k = (n) => (n >= 1024 ? `${Math.round(n / 1024)}k` : `${n}`);
+  const rows = [['qwen', 'Qwen3.6 35B-A3B'], ['inkling', 'Inkling 2 Mini']];
+  $('director-body').innerHTML = rows.map(([id, label]) => {
+    const m = d.models[id] || {};
+    const ctx = d.ctx?.[id] || 0;
+    const st = (d.parked || []).includes(id) ? 'stopped by hand'
+      : (ctx ? `loaded \u00b7 ${k(ctx)} context` : 'parked');
+    const cls = sw ? 'state--switching' : (ctx ? 'state--running' : 'state--stopped');
+    return `<tr><td class="key">${label}</td><td class="${cls}">${esc(st)}</td>
+      <td class="num">${m.inflight ?? 0}</td><td class="num">${ago(m.last_request_ago)}</td>
+      <td class="num hide-sm">${m.recent ?? 0} / ${Math.round((d.policy?.window_s || 180) / 60)}m</td></tr>`;
+  }).join('');
+
+  const ev = (d.events || []).slice().reverse();
+  $('director-events').innerHTML = ev.map((e) => {
+    const t = new Date(e.ts * 1000);
+    const hh = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `<li><time>${hh}</time>${esc(e.text)}</li>`;
+  }).join('') || '<li>No changes yet.</li>';
+  $('director-meta').textContent = `${d.stats?.switches ?? 0} switches \u00b7 ${d.stats?.forwarded ?? 0} requests`;
+}
+
+async function loadDirector() {
+  try { renderDirector(await jget('./api/director')); } catch { /* keep last */ }
+}
+
 function tickServicesAge() {
   const el = $('docker-meta');
   if (!el || !state.servicesTs || !state.lastDocker?.available) return;
   const cs = state.lastDocker.containers || [];
   const age = Math.max(0, Math.round(Date.now() / 1000 - state.servicesTs));
-  const bits = [`${cs.length} running`];
+  const up = cs.filter((c) => !c.state || c.state === 'running').length;
+  const bits = [`${up} running` + (up < cs.length ? `, ${cs.length - up} stopped` : '')];
   if (state.lastDocker.stats_error) bits.push('usage unavailable');
   // Freshness on the face of it: a frozen table should look frozen instead of
   // looking like nothing happened to change.
@@ -1286,6 +1453,9 @@ async function boot() {
     try { renderStorage(await jget('./api/info')); } catch { /* keep last */ }
   }, 60000);
 
+  wireControls();
+  loadDirector();
+  setInterval(loadDirector, 3000);
   loadServices();
   setInterval(loadServices, 10000);
   setInterval(tickServicesAge, 1000);

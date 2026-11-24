@@ -60,7 +60,22 @@ if [[ -n "$PV" ]]; then
   fi
 fi
 
-try docker compose up -d
+# Recreate/start only services that are running now (or have never been
+# created, i.e. new in the compose file). Anything stopped -- by hand from
+# Sparkboard, or a model variant the director has parked -- stays stopped.
+# --no-deps so a running service doesn't drag a stopped dependency back up.
+declare -A STATE=()
+while read -r svc st; do [[ -n $svc ]] && STATE[$svc]=$st; done \
+  < <(docker compose ps -a --format '{{.Service}} {{.State}}')
+UP=(); KEEP=()
+while read -r svc; do
+  case "${STATE[$svc]:-}" in
+    ""|running|restarting|created) UP+=("$svc") ;;
+    *) KEEP+=("$svc (${STATE[$svc]})") ;;
+  esac
+done < <(docker compose config --services)
+(( ${#KEEP[@]} )) && echo "Left stopped: ${KEEP[*]}"
+(( ${#UP[@]} )) && try docker compose up -d --no-deps "${UP[@]}"
 step "Cleanup"
 docker image prune -f
 docker builder prune -f --filter until=168h >/dev/null
