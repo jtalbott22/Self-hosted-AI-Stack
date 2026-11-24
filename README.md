@@ -31,7 +31,7 @@ Everything runs through Docker Compose and communicates over the private Compose
 
 <a href="docs/diagrams/architecture-stack-v2.png"><img src="docs/diagrams/architecture-stack-v2.png" alt="Architecture of the whole stack: you reach the avatar through CloudFront and nginx with Google sign-in, or on the LAN; the avatar and Open WebUI share one local llama.cpp model, the voice services, and search, RAG and tool services, and the avatar controls Home Assistant."></a>
 
-From outside, your domain goes through CloudFront to nginx on the Windows host, which asks for a Google sign-in (oauth2-proxy, with authgate banning brute-force attempts); on the LAN, nginx lets you straight in. Open WebUI and the avatar share one local llama.cpp model and the voice services. Open WebUI also uses Postgres/pgvector for RAG, Tika to read documents, SearXNG and Playwright for web search, Jupyter for code, ComfyUI for images, Open Terminal and the GitLab MCP server. Sparkboard (optional) monitors the machine.
+From outside, your domain goes through CloudFront to nginx on the Windows host ([config](nginx/windows/)), which asks for a Google sign-in (oauth2-proxy, with authgate banning brute-force attempts); on the LAN, nginx lets you straight in. Open WebUI and the avatar share one local llama.cpp model and the voice services. Open WebUI also uses Postgres/pgvector for RAG, Tika to read documents, SearXNG and Playwright for web search, Jupyter for code, ComfyUI for images, Open Terminal and the GitLab MCP server. Sparkboard (optional) monitors the machine.
 
 <a href="docs/diagrams/architecture-avatar-v2.png"><img src="docs/diagrams/architecture-avatar-v2.png" alt="What the avatar page talks to: Kokoro, Speaches and the LAM lip-sync and maker services for voice and face; the music service; the shared llama.cpp model; the Lens bridge for Open WebUI tools; and, per Google account, saved chats and home control through Home Assistant."></a>
 
@@ -764,7 +764,7 @@ Every Qwen variant takes the network alias `llama` and host port 8000, and every
    SPARKBOARD_DIRECTOR=1
    SPARKBOARD_CONTROL_KEY=<openssl rand -hex 16>
    ```
-5. Point clients at the front door. For opencode, `ops/opencode/opencode.json` defines both models through a public nginx: replace `your-host.example`, copy the file to `~/.config/opencode/opencode.json` on each PC, and set `HOME_LLAMA_API_KEY` there to your `LLAMA_API_KEY`. The config has no `small_model`, so opencode's side requests (such as chat titles) go to the model you're using instead of knocking the other model out of its boost. The nginx routes look like this:
+5. Point clients at the front door. For opencode, `ops/opencode/opencode.json` defines both models through a public nginx: replace `your-host.example`, copy the file to `~/.config/opencode/opencode.json` on each PC, and set `HOME_LLAMA_API_KEY` there to your `LLAMA_API_KEY`. The config has no `small_model`, so opencode's side requests (such as chat titles) go to the model you're using instead of knocking the other model out of its boost. The routes look like this, and the full Windows nginx config is in [`nginx/windows/`](nginx/windows/):
    ```nginx
    location /llama/   { proxy_pass http://127.0.0.1:9102/llm/qwen/;    proxy_buffering off; proxy_read_timeout 900s; }
    location /inkling/ { proxy_pass http://127.0.0.1:9102/llm/inkling/; proxy_buffering off; proxy_read_timeout 900s; }
@@ -900,6 +900,7 @@ Back up important data before making major image or database-version changes.
 ├── sparkboard/              dashboard, container controls, model director (app/director.py)
 ├── llama-inkling/           CUDA runtime image for the optional Inkling model
 ├── opt/                     Unsloth's llama.cpp build for Inkling (not committed)
+├── nginx/windows/           the Windows nginx in front of the stack (TLS, CloudFront origin, LAN rules)
 ├── ops/                     nightly OS + image updates, backups, WSL watchdog
 │   └── opencode/            opencode client config for both models
 └── avatar/
