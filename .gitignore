@@ -7,3 +7,16 @@ ops/backups/
 
 # Unsloth llama.cpp build for Inkling (downloaded, not committed)
 opt/
+
+# Never commit secrets or machine state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.htpasswd
+htpasswd
+secrets.yaml
+avatar/oauth2/allowed-emails.txt
+__pycache__/
+*.pyc
